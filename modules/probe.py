@@ -103,7 +103,6 @@ class ProbeModule(BaseModule):
             "-json",
             "-timeout", "10",
             "-retries", "1",
-            "-no-fallback",
         ]
 
         if log_callback:
@@ -117,10 +116,15 @@ class ProbeModule(BaseModule):
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            input_data = "\n".join(
-                f"https://{s}" if not s.startswith(("http://", "https://")) else s
-                for s in subdomains
-            )
+            # Probe both http and https for each subdomain
+            targets = []
+            for s in subdomains:
+                if s.startswith(("http://", "https://")):
+                    targets.append(s)
+                else:
+                    targets.append(f"https://{s}")
+                    targets.append(f"http://{s}")
+            input_data = "\n".join(targets)
 
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(input_data.encode()),
@@ -155,46 +159,53 @@ class ProbeModule(BaseModule):
         null_device = "NUL" if sys.platform == "win32" else "/dev/null"
 
         for i, subdomain in enumerate(subdomains):
-            if not subdomain.startswith(("http://", "https://")):
-                url = f"https://{subdomain}"
+            # Determine URLs to try
+            if subdomain.startswith(("http://", "https://")):
+                urls_to_try = [subdomain]
             else:
-                url = subdomain
+                urls_to_try = [f"https://{subdomain}", f"http://{subdomain}"]
 
-            # Windows-compatible curl command
-            cmd = [
-                tool_path,
-                "-s",
-                "-o", null_device,
-                "-w", "%{http_code}",
-                "-m", "10",
-                "--connect-timeout", "5",
-                "-L",
-                "-k",  # Allow insecure connections
-                url,
-            ]
+            status_code = "000"
+            for url in urls_to_try:
+                # Windows-compatible curl command
+                cmd = [
+                    tool_path,
+                    "-s",
+                    "-o", null_device,
+                    "-w", "%{http_code}",
+                    "-m", "10",
+                    "--connect-timeout", "5",
+                    "-L",
+                    "-k",  # Allow insecure connections
+                    url,
+                ]
 
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                stdout, _ = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=15
-                )
-                status_code = stdout.decode().strip()
-                yield f"{subdomain}|{status_code}"
+                try:
+                    process = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    stdout, _ = await asyncio.wait_for(
+                        process.communicate(),
+                        timeout=15
+                    )
+                    code = stdout.decode().strip()
+                    # If we got a valid response (not 000), use it
+                    if code and code != "000":
+                        status_code = code
+                        break
+                except asyncio.TimeoutError:
+                    continue
+                except Exception as e:
+                    if log_callback:
+                        log_callback(f"[probe] curl error for {url}: {e}")
+                    continue
 
-                if log_callback and (i + 1) % 10 == 0:
-                    log_callback(f"[probe] Checked {i + 1}/{len(subdomains)} subdomains")
+            yield f"{subdomain}|{status_code}"
 
-            except asyncio.TimeoutError:
-                yield f"{subdomain}|000"
-            except Exception as e:
-                if log_callback:
-                    log_callback(f"[probe] curl error for {subdomain}: {e}")
-                yield f"{subdomain}|000"
+            if log_callback and (i + 1) % 10 == 0:
+                log_callback(f"[probe] Checked {i + 1}/{len(subdomains)} subdomains")
 
     async def _run_python_probe(
         self, subdomains: list[str], timeout: int, log_callback: callable
@@ -209,26 +220,28 @@ class ProbeModule(BaseModule):
         ssl_context.verify_mode = ssl.CERT_NONE
 
         async def check_subdomain(subdomain: str) -> str:
-            if not subdomain.startswith(("http://", "https://")):
-                url = f"https://{subdomain}"
-            else:
-                url = subdomain
-
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             def do_request():
-                try:
-                    req = urllib.request.Request(
-                        url,
-                        method="HEAD",
-                        headers={"User-Agent": "Mozilla/5.0 ReconAutomator/1.0"}
-                    )
-                    with urllib.request.urlopen(req, timeout=10, context=ssl_context) as resp:
-                        return resp.getcode()
-                except urllib.error.HTTPError as e:
-                    return e.code
-                except Exception:
-                    return 0
+                # Try HTTPS first, then HTTP
+                for scheme in ["https", "http"]:
+                    if subdomain.startswith(("http://", "https://")):
+                        url = subdomain
+                    else:
+                        url = f"{scheme}://{subdomain}"
+                    try:
+                        req = urllib.request.Request(
+                            url,
+                            method="HEAD",
+                            headers={"User-Agent": "Mozilla/5.0 ReconAutomator/1.0"}
+                        )
+                        with urllib.request.urlopen(req, timeout=10, context=ssl_context) as resp:
+                            return resp.getcode()
+                    except urllib.error.HTTPError as e:
+                        return e.code
+                    except Exception:
+                        continue
+                return 0
 
             try:
                 status = await asyncio.wait_for(
