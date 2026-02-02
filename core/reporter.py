@@ -64,6 +64,7 @@ class ReconReporter:
 
         # Export individual text files
         self._export_subdomains(results, scan_dir)
+        self._export_inactive_subdomains(results, scan_dir)
         self._export_ports(results, scan_dir)
         self._export_technologies(results, scan_dir)
         self._export_directories(results, scan_dir)
@@ -119,6 +120,26 @@ class ReconReporter:
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n".join(sorted(set(subdomains))))
             logger.info(f"Exported {len(subdomains)} subdomains: {path}")
+
+    def _export_inactive_subdomains(self, results: dict[str, dict], scan_dir: Path):
+        """Export inactive/unused subdomains to a separate file."""
+        inactive_result = results.get("_inactive_subdomains", {})
+        if inactive_result.get("status") != "completed":
+            return
+
+        inactive = [
+            item["subdomain"]
+            for item in inactive_result.get("output", [])
+            if "subdomain" in item
+        ]
+
+        if inactive:
+            path = scan_dir / "inactive_subdomains.txt"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("# Inactive/Unused Subdomains\n")
+                f.write("# These subdomains did not respond to HTTP requests\n\n")
+                f.write("\n".join(sorted(set(inactive))))
+            logger.info(f"Exported {len(inactive)} inactive subdomains: {path}")
 
     def _export_ports(self, results: dict[str, dict], scan_dir: Path):
         """Export ports to text file."""
@@ -186,29 +207,55 @@ class ReconReporter:
             logger.info(f"Exported {total_techs} technologies from {len(tech_by_url)} URLs: {path}")
 
     def _export_directories(self, results: dict[str, dict], scan_dir: Path):
-        """Export discovered directories to text file."""
+        """Export discovered directories to text file, grouped by subdomain."""
         dir_result = results.get("directory", {})
         if dir_result.get("status") != "completed":
             return
 
-        lines = []
+        # Group directories by subdomain
+        by_subdomain: dict[str, list[dict]] = {}
         for item in dir_result.get("output", []):
             if "url" in item:
+                subdomain = item.get("subdomain", "unknown")
+                if subdomain not in by_subdomain:
+                    by_subdomain[subdomain] = []
+                by_subdomain[subdomain].append(item)
+
+        if not by_subdomain:
+            return
+
+        lines = []
+        total_count = 0
+
+        for subdomain in sorted(by_subdomain.keys()):
+            items = by_subdomain[subdomain]
+            total_count += len(items)
+
+            lines.append("=" * 60)
+            lines.append(f"[{subdomain}]")
+            lines.append(f"Found: {len(items)} directories/files")
+            lines.append("=" * 60)
+
+            for item in items:
                 url = item["url"]
                 status = item.get("status_code", "")
                 size = item.get("size", "")
-                line = url
+                path = item.get("path", "")
+
+                line = f"  {path or url}"
                 if status:
                     line += f" [{status}]"
                 if size:
                     line += f" ({size} bytes)"
                 lines.append(line)
 
+            lines.append("")  # Empty line between subdomains
+
         if lines:
             path = scan_dir / "directories.txt"
             with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines))
-            logger.info(f"Exported {len(lines)} directories: {path}")
+                f.write("\n".join(lines).rstrip())
+            logger.info(f"Exported {total_count} directories from {len(by_subdomain)} subdomains: {path}")
 
     def _export_wayback(self, results: dict[str, dict], scan_dir: Path):
         """Export wayback URLs to text file."""

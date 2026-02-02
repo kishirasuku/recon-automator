@@ -14,6 +14,9 @@ profiles:
       subdomain:
         enabled: true
         timeout: 60
+      probe:
+        enabled: true
+        timeout: 120
       portscan:
         enabled: true
         ports: "80,443,8080,8443"
@@ -30,6 +33,9 @@ profiles:
       subdomain:
         enabled: true
         timeout: 180
+      probe:
+        enabled: true
+        timeout: 300
       portscan:
         enabled: true
         ports: "top-1000"
@@ -46,6 +52,9 @@ profiles:
     timeout: 3600
     modules:
       subdomain:
+        enabled: true
+        timeout: 600
+      probe:
         enabled: true
         timeout: 600
       portscan:

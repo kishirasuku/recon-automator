@@ -390,6 +390,7 @@ class ResultsViewer(ctk.CTkToplevel):
 
     TAB_NAMES = {
         "subdomain": "Subdomains",
+        "probe": "Probe Results",
         "portscan": "Ports",
         "techdetect": "Technologies",
         "directory": "Directories",
@@ -496,6 +497,25 @@ class ResultsViewer(ctk.CTkToplevel):
             for item in output:
                 lines.append(item.get("subdomain", ""))
 
+        elif module_name == "probe":
+            alive = []
+            dead = []
+            for item in output:
+                subdomain = item.get("subdomain", "")
+                status = item.get("status_code", 0)
+                if item.get("alive", False):
+                    alive.append(f"[ALIVE] {subdomain} (HTTP {status})")
+                else:
+                    dead.append(f"[DEAD]  {subdomain} (HTTP {status})")
+
+            if alive:
+                lines.append("=== ALIVE SUBDOMAINS ===")
+                lines.extend(alive)
+                lines.append("")
+            if dead:
+                lines.append("=== INACTIVE SUBDOMAINS ===")
+                lines.extend(dead)
+
         elif module_name == "portscan":
             for item in output:
                 host = item.get("host", "unknown")
@@ -532,16 +552,30 @@ class ResultsViewer(ctk.CTkToplevel):
                 lines.append("")
 
         elif module_name == "directory":
+            # Group by subdomain
+            by_subdomain: dict[str, list[dict]] = {}
             for item in output:
-                url = item.get("url", "")
-                status = item.get("status_code", "")
-                size = item.get("size", "")
-                line = url
-                if status:
-                    line += f"  [{status}]"
-                if size:
-                    line += f"  ({size} bytes)"
-                lines.append(line)
+                subdomain = item.get("subdomain", "unknown")
+                if subdomain not in by_subdomain:
+                    by_subdomain[subdomain] = []
+                by_subdomain[subdomain].append(item)
+
+            for subdomain in sorted(by_subdomain.keys()):
+                items = by_subdomain[subdomain]
+                lines.append("=" * 50)
+                lines.append(f"[{subdomain}] - {len(items)} results")
+                lines.append("=" * 50)
+                for item in items:
+                    path = item.get("path", item.get("url", ""))
+                    status = item.get("status_code", "")
+                    size = item.get("size", "")
+                    line = f"  {path}"
+                    if status:
+                        line += f"  [{status}]"
+                    if size:
+                        line += f"  ({size} bytes)"
+                    lines.append(line)
+                lines.append("")
 
         elif module_name == "wayback":
             for item in output:
@@ -598,6 +632,14 @@ class ResultsViewer(ctk.CTkToplevel):
                 icon = "[--]"
 
             lines.append(f"{icon} {tab_title}: {count} results")
+
+        # Show inactive subdomains count
+        inactive_result = self.results.get("_inactive_subdomains", {})
+        if inactive_result.get("status") == "completed":
+            inactive_count = inactive_result.get("count", 0)
+            if inactive_count > 0:
+                lines.append("")
+                lines.append(f"[!] Inactive subdomains: {inactive_count}")
 
         lines.extend([
             "",

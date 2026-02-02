@@ -124,7 +124,12 @@ class ReconRunner:
         target: str,
         profile_config: dict,
     ) -> dict[str, dict]:
-        """Run all enabled modules for a scan.
+        """Run all enabled modules for a scan with dependency handling.
+
+        The scan runs in phases:
+        1. Subdomain enumeration
+        2. Probe discovered subdomains (check which are alive)
+        3. Run remaining modules (directory uses alive subdomains)
 
         Args:
             modules: List of module instances to run.
@@ -139,47 +144,117 @@ class ReconRunner:
         self.semaphore = asyncio.Semaphore(self.max_concurrent)
 
         module_configs = profile_config.get("modules", {})
+        modules_by_name = {m.name: m for m in modules}
 
-        # Filter enabled modules
-        enabled_modules = []
+        # Categorize modules
+        phase1_modules = []  # subdomain
+        phase2_modules = []  # probe
+        phase3_modules = []  # everything else
+
         for module in modules:
             mod_config = module_configs.get(module.name, {})
-            if mod_config.get("enabled", True):
-                if module.is_available():
-                    enabled_modules.append((module, mod_config))
-                    self.update_progress(module.name, "pending")
-                else:
-                    missing = module.get_missing_tools()
-                    self.log(f"Skipping {module.name}: missing tools {missing}")
-                    self.update_progress(module.name, "skipped")
+            if not mod_config.get("enabled", True):
+                continue
+            if not module.is_available():
+                missing = module.get_missing_tools()
+                self.log(f"Skipping {module.name}: missing tools {missing}")
+                self.update_progress(module.name, "skipped")
+                continue
 
-        if not enabled_modules:
-            self.log("No modules available to run")
-            return {}
+            self.update_progress(module.name, "pending")
 
-        self.log(f"Running {len(enabled_modules)} modules on target: {target}")
+            if module.name == "subdomain":
+                phase1_modules.append((module, mod_config))
+            elif module.name == "probe":
+                phase2_modules.append((module, mod_config))
+            else:
+                phase3_modules.append((module, mod_config))
 
-        # Create tasks for all modules
-        tasks = []
-        for module, mod_config in enabled_modules:
-            task = asyncio.create_task(
-                self.run_module(module, target, mod_config),
-                name=module.name,
-            )
-            self.running_tasks[module.name] = task
-            tasks.append((module.name, task))
+        self.log(f"Running scan on target: {target}")
 
-        # Wait for all tasks to complete
-        for module_name, task in tasks:
-            try:
-                result = await task
-                self.results[module_name] = result
-            except asyncio.CancelledError:
-                self.results[module_name] = {
-                    "status": "cancelled",
-                    "output": [],
-                    "raw": "",
-                }
+        # Track discovered data
+        discovered_subdomains = []
+        alive_subdomains = []
+        inactive_subdomains = []
+
+        # Phase 1: Run subdomain enumeration
+        if phase1_modules:
+            self.log("Phase 1: Subdomain enumeration")
+            for module, mod_config in phase1_modules:
+                if self.cancelled:
+                    break
+                result = await self.run_module(module, target, mod_config)
+                self.results[module.name] = result
+                if result.get("status") == "completed":
+                    for item in result.get("output", []):
+                        if "subdomain" in item:
+                            discovered_subdomains.append(item["subdomain"])
+
+        # Add main target to subdomains list
+        if target not in discovered_subdomains:
+            discovered_subdomains.insert(0, target)
+
+        self.log(f"Discovered {len(discovered_subdomains)} subdomains")
+
+        # Phase 2: Probe subdomains
+        if phase2_modules and discovered_subdomains and not self.cancelled:
+            self.log("Phase 2: Probing subdomains")
+            for module, mod_config in phase2_modules:
+                if self.cancelled:
+                    break
+                # Pass subdomains to probe module
+                mod_config = dict(mod_config)
+                mod_config["subdomains"] = discovered_subdomains
+                result = await self.run_module(module, target, mod_config)
+                self.results[module.name] = result
+                if result.get("status") == "completed":
+                    for item in result.get("output", []):
+                        subdomain = item.get("subdomain", "")
+                        if item.get("alive", False):
+                            alive_subdomains.append(subdomain)
+                        else:
+                            inactive_subdomains.append(subdomain)
+
+            # Store inactive subdomains in results
+            self.results["_inactive_subdomains"] = {
+                "status": "completed",
+                "output": [{"subdomain": s, "type": "inactive"} for s in inactive_subdomains],
+                "count": len(inactive_subdomains),
+            }
+            self.log(f"Found {len(alive_subdomains)} alive, {len(inactive_subdomains)} inactive subdomains")
+        else:
+            # No probe module, assume all subdomains are alive
+            alive_subdomains = discovered_subdomains
+
+        # Phase 3: Run remaining modules
+        if phase3_modules and not self.cancelled:
+            self.log("Phase 3: Running remaining modules")
+            tasks = []
+
+            for module, mod_config in phase3_modules:
+                mod_config = dict(mod_config)
+
+                # Pass alive subdomains to directory module
+                if module.name == "directory" and alive_subdomains:
+                    mod_config["targets"] = alive_subdomains
+
+                task = asyncio.create_task(
+                    self.run_module(module, target, mod_config),
+                    name=module.name,
+                )
+                self.running_tasks[module.name] = task
+                tasks.append((module.name, task))
+
+            for module_name, task in tasks:
+                try:
+                    result = await task
+                    self.results[module_name] = result
+                except asyncio.CancelledError:
+                    self.results[module_name] = {
+                        "status": "cancelled",
+                        "output": [],
+                        "raw": "",
+                    }
 
         self.running_tasks.clear()
         return self.results

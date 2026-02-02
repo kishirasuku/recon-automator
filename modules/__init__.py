@@ -6,10 +6,12 @@ from .portscan import PortScanModule
 from .techdetect import TechDetectModule
 from .directory import DirectoryModule
 from .wayback import WaybackModule
+from .probe import ProbeModule
 
 # Module registry - maps module names to their classes
 MODULE_REGISTRY: dict[str, type[BaseModule]] = {
     "subdomain": SubdomainModule,
+    "probe": ProbeModule,
     "portscan": PortScanModule,
     "techdetect": TechDetectModule,
     "directory": DirectoryModule,
@@ -85,6 +87,7 @@ def check_module_availability(config: dict) -> dict[str, dict]:
 __all__ = [
     "BaseModule",
     "SubdomainModule",
+    "ProbeModule",
     "PortScanModule",
     "TechDetectModule",
     "DirectoryModule",
