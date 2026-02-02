@@ -1,0 +1,69 @@
+tools:
+  subfinder: /usr/bin/subfinder
+  nmap: /usr/bin/nmap
+  whatweb: /usr/bin/whatweb
+  gobuster: /usr/bin/gobuster
+  waybackurls: /usr/bin/waybackurls
+  gau: /usr/bin/gau
+  httpx: /usr/bin/httpx
+
+profiles:
+  quick:
+    timeout: 300
+    modules:
+      subdomain:
+        enabled: true
+        timeout: 60
+      portscan:
+        enabled: true
+        ports: "80,443,8080,8443"
+      techdetect:
+        enabled: true
+      directory:
+        enabled: false
+      wayback:
+        enabled: true
+        limit: 100
+  standard:
+    timeout: 900
+    modules:
+      subdomain:
+        enabled: true
+        timeout: 180
+      portscan:
+        enabled: true
+        ports: "top-1000"
+      techdetect:
+        enabled: true
+      directory:
+        enabled: true
+        wordlist: common
+        threads: 30
+      wayback:
+        enabled: true
+        limit: 500
+  deep:
+    timeout: 3600
+    modules:
+      subdomain:
+        enabled: true
+        timeout: 600
+      portscan:
+        enabled: true
+        ports: "1-65535"
+      techdetect:
+        enabled: true
+      directory:
+        enabled: true
+        wordlist: medium
+        threads: 50
+      wayback:
+        enabled: true
+        limit: 0
+
+wordlists:
+  common: /usr/share/wordlists/dirb/common.txt
+  medium: /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt
+
+output:
+  directory: ./output
