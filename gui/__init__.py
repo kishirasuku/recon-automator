@@ -8,6 +8,7 @@ from .widgets import (
     ToolAvailabilityPanel,
     TargetInput,
     ProfileSelector,
+    ResultsViewer,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "ToolAvailabilityPanel",
     "TargetInput",
     "ProfileSelector",
+    "ResultsViewer",
 ]

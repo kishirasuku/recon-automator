@@ -148,26 +148,42 @@ class ReconReporter:
             logger.info(f"Exported {len(lines)} ports: {path}")
 
     def _export_technologies(self, results: dict[str, dict], scan_dir: Path):
-        """Export technologies to text file."""
+        """Export technologies to text file with domain information."""
         tech_result = results.get("techdetect", {})
         if tech_result.get("status") != "completed":
             return
 
-        lines = []
+        # Group technologies by URL/domain
+        tech_by_url: dict[str, list[str]] = {}
         for item in tech_result.get("output", []):
             if "technology" in item:
                 tech = item["technology"]
                 version = item.get("version", "")
-                if version:
-                    lines.append(f"{tech} ({version})")
-                else:
-                    lines.append(tech)
+                url = item.get("url", "unknown")
 
-        if lines:
+                if version:
+                    tech_str = f"{tech} ({version})"
+                else:
+                    tech_str = tech
+
+                if url not in tech_by_url:
+                    tech_by_url[url] = []
+                if tech_str not in tech_by_url[url]:
+                    tech_by_url[url].append(tech_str)
+
+        if tech_by_url:
+            lines = []
+            for url, techs in sorted(tech_by_url.items()):
+                lines.append(f"[{url}]")
+                for tech in sorted(techs):
+                    lines.append(f"  - {tech}")
+                lines.append("")  # Empty line between URLs
+
             path = scan_dir / "technologies.txt"
             with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(sorted(set(lines))))
-            logger.info(f"Exported {len(lines)} technologies: {path}")
+                f.write("\n".join(lines).rstrip())
+            total_techs = sum(len(t) for t in tech_by_url.values())
+            logger.info(f"Exported {total_techs} technologies from {len(tech_by_url)} URLs: {path}")
 
     def _export_directories(self, results: dict[str, dict], scan_dir: Path):
         """Export discovered directories to text file."""

@@ -1,7 +1,7 @@
 """Custom GUI widgets for the Recon Automator."""
 
 import customtkinter as ctk
-from typing import Callable
+from typing import Callable, Optional
 
 
 class LogViewer(ctk.CTkFrame):
@@ -383,3 +383,228 @@ class ProfileSelector(ctk.CTkFrame):
             enabled: Whether to enable the selector.
         """
         self.dropdown.configure(state="normal" if enabled else "disabled")
+
+
+class ResultsViewer(ctk.CTkToplevel):
+    """Window for viewing scan results."""
+
+    TAB_NAMES = {
+        "subdomain": "Subdomains",
+        "portscan": "Ports",
+        "techdetect": "Technologies",
+        "directory": "Directories",
+        "wayback": "Wayback URLs",
+    }
+
+    def __init__(self, master, results: dict, target: str, **kwargs):
+        """Initialize the results viewer.
+
+        Args:
+            master: Parent widget.
+            results: Scan results dictionary.
+            target: Target domain.
+        """
+        super().__init__(master, **kwargs)
+
+        self.title(f"Results - {target}")
+        self.geometry("800x600")
+        self.minsize(600, 400)
+
+        self.results = results
+        self.target = target
+
+        self._create_widgets()
+
+        # Bring window to front
+        self.lift()
+        self.focus_force()
+
+    def _create_widgets(self):
+        """Create the viewer widgets."""
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        # Header
+        header = ctk.CTkLabel(
+            self,
+            text=f"Scan Results: {self.target}",
+            font=ctk.CTkFont(size=18, weight="bold"),
+        )
+        header.grid(row=0, column=0, pady=10, padx=10, sticky="w")
+
+        # Tab view
+        self.tabview = ctk.CTkTabview(self)
+        self.tabview.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+
+        # Create tabs for each module
+        for module_name, tab_title in self.TAB_NAMES.items():
+            module_result = self.results.get(module_name, {})
+            if module_result.get("status") == "completed":
+                tab = self.tabview.add(tab_title)
+                self._populate_tab(tab, module_name, module_result)
+
+        # Summary tab
+        summary_tab = self.tabview.add("Summary")
+        self._populate_summary(summary_tab)
+
+    def _populate_tab(self, tab: ctk.CTkFrame, module_name: str, result: dict):
+        """Populate a tab with module results.
+
+        Args:
+            tab: Tab frame.
+            module_name: Name of the module.
+            result: Module result dictionary.
+        """
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+
+        # Count label
+        count = result.get("count", 0)
+        count_label = ctk.CTkLabel(
+            tab,
+            text=f"Found: {count} results",
+            font=ctk.CTkFont(size=12),
+        )
+        count_label.grid(row=0, column=0, sticky="w", pady=(5, 10))
+
+        # Results textbox
+        textbox = ctk.CTkTextbox(
+            tab,
+            font=("Consolas", 11),
+            wrap="none",
+        )
+        textbox.grid(row=1, column=0, sticky="nsew")
+
+        # Format and insert results
+        content = self._format_results(module_name, result.get("output", []))
+        textbox.insert("1.0", content)
+        textbox.configure(state="disabled")
+
+    def _format_results(self, module_name: str, output: list) -> str:
+        """Format module output for display.
+
+        Args:
+            module_name: Name of the module.
+            output: List of result items.
+
+        Returns:
+            Formatted string.
+        """
+        lines = []
+
+        if module_name == "subdomain":
+            for item in output:
+                lines.append(item.get("subdomain", ""))
+
+        elif module_name == "portscan":
+            for item in output:
+                host = item.get("host", "unknown")
+                port = item.get("port", "")
+                service = item.get("service", "")
+                version = item.get("version", "")
+                line = f"{host}:{port}"
+                if service:
+                    line += f"  [{service}"
+                    if version:
+                        line += f" {version}"
+                    line += "]"
+                lines.append(line)
+
+        elif module_name == "techdetect":
+            # Group by URL
+            by_url: dict[str, list[str]] = {}
+            for item in output:
+                url = item.get("url", "unknown")
+                tech = item.get("technology", "")
+                version = item.get("version", "")
+                if version:
+                    tech_str = f"{tech} ({version})"
+                else:
+                    tech_str = tech
+                if url not in by_url:
+                    by_url[url] = []
+                by_url[url].append(tech_str)
+
+            for url, techs in sorted(by_url.items()):
+                lines.append(f"[{url}]")
+                for tech in sorted(techs):
+                    lines.append(f"  - {tech}")
+                lines.append("")
+
+        elif module_name == "directory":
+            for item in output:
+                url = item.get("url", "")
+                status = item.get("status_code", "")
+                size = item.get("size", "")
+                line = url
+                if status:
+                    line += f"  [{status}]"
+                if size:
+                    line += f"  ({size} bytes)"
+                lines.append(line)
+
+        elif module_name == "wayback":
+            for item in output:
+                url = item.get("url", "")
+                category = item.get("category", "")
+                if category and category != "unknown":
+                    lines.append(f"{url}  [{category}]")
+                else:
+                    lines.append(url)
+
+        return "\n".join(lines)
+
+    def _populate_summary(self, tab: ctk.CTkFrame):
+        """Populate the summary tab.
+
+        Args:
+            tab: Summary tab frame.
+        """
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(0, weight=1)
+
+        textbox = ctk.CTkTextbox(
+            tab,
+            font=("Consolas", 12),
+            wrap="word",
+        )
+        textbox.grid(row=0, column=0, sticky="nsew", pady=5)
+
+        lines = [
+            "=" * 50,
+            "SCAN SUMMARY",
+            "=" * 50,
+            f"Target: {self.target}",
+            "",
+            "-" * 50,
+            "MODULE RESULTS",
+            "-" * 50,
+        ]
+
+        total_findings = 0
+        for module_name, tab_title in self.TAB_NAMES.items():
+            result = self.results.get(module_name, {})
+            status = result.get("status", "not run")
+            count = result.get("count", 0)
+            total_findings += count
+
+            if status == "completed":
+                icon = "[OK]"
+            elif status == "failed":
+                icon = "[FAIL]"
+            elif status == "cancelled":
+                icon = "[CANCEL]"
+            else:
+                icon = "[--]"
+
+            lines.append(f"{icon} {tab_title}: {count} results")
+
+        lines.extend([
+            "",
+            "-" * 50,
+            f"Total findings: {total_findings}",
+            "=" * 50,
+        ])
+
+        textbox.insert("1.0", "\n".join(lines))
+        textbox.configure(state="disabled")

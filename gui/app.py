@@ -19,6 +19,7 @@ from gui.widgets import (
     ToolAvailabilityPanel,
     TargetInput,
     ProfileSelector,
+    ResultsViewer,
 )
 
 
@@ -52,6 +53,8 @@ class ReconAutomatorApp(ctk.CTk):
         # State
         self.is_scanning = False
         self.current_scan_dir: Optional[Path] = None
+        self.last_results: Optional[dict] = None
+        self.last_target: Optional[str] = None
 
         # Window setup
         self.title("Recon Automator")
@@ -149,6 +152,19 @@ class ReconAutomatorApp(ctk.CTk):
         )
         self.cancel_button.grid(row=0, column=1, padx=(0, 10))
 
+        self.view_results_button = ctk.CTkButton(
+            button_frame,
+            text="View Results",
+            command=self._on_view_results,
+            font=ctk.CTkFont(size=14),
+            height=40,
+            width=120,
+            fg_color="#006600",
+            hover_color="#004400",
+            state="disabled",
+        )
+        self.view_results_button.grid(row=0, column=2, padx=(0, 10))
+
         self.export_button = ctk.CTkButton(
             button_frame,
             text="Open Output",
@@ -157,7 +173,7 @@ class ReconAutomatorApp(ctk.CTk):
             height=40,
             width=120,
         )
-        self.export_button.grid(row=0, column=2)
+        self.export_button.grid(row=0, column=3)
 
         # --- Progress ---
         self.progress = ProgressIndicator(self)
@@ -257,10 +273,14 @@ class ReconAutomatorApp(ctk.CTk):
         profile = self.profile_selector.get()
         profile_config = self.config.get("profiles", {}).get(profile, {})
 
+        # Store target for results viewer
+        self.last_target = target
+
         # Update UI state
         self.is_scanning = True
         self.start_button.configure(state="disabled")
         self.cancel_button.configure(state="normal")
+        self.view_results_button.configure(state="disabled")
         self.target_input.set_enabled(False)
         self.profile_selector.set_enabled(False)
         self.module_status.reset_all()
@@ -316,12 +336,22 @@ class ReconAutomatorApp(ctk.CTk):
         self.profile_selector.set_enabled(True)
 
         if results:
+            self.last_results = results
+            self.view_results_button.configure(state="normal")
             completed = sum(1 for r in results.values() if r.get("status") == "completed")
             total = len(results)
             self.progress.stop(f"Complete: {completed}/{total} modules")
             self.log_viewer.append(f"\nScan complete. Results saved to: {self.current_scan_dir}")
         else:
             self.progress.reset("Cancelled")
+
+    def _on_view_results(self):
+        """Open the results viewer window."""
+        if not self.last_results or not self.last_target:
+            self.log_viewer.append("[ERROR] No results to display")
+            return
+
+        ResultsViewer(self, self.last_results, self.last_target)
 
     def _on_open_output(self):
         """Open the output directory in file manager."""
