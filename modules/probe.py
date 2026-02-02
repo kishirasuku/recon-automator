@@ -1,24 +1,48 @@
 """Subdomain probe module to check which subdomains are alive."""
 
 import asyncio
+import sys
 from typing import AsyncIterator, Any
 from .base import BaseModule
-from core.runner import run_command
 
 
 class ProbeModule(BaseModule):
     """Check which subdomains are alive/responding."""
 
     name = "probe"
-    description = "Check subdomain availability using httpx"
-    required_tools = ["httpx"]
+    description = "Check subdomain availability using httpx or curl"
+    required_tools = []  # Will be set dynamically
 
     def __init__(self, config: dict):
         """Initialize with config."""
         super().__init__(config)
-        # Can also use curl as fallback
-        if not self.is_available():
-            self.required_tools = ["curl"]
+        import shutil
+
+        # Check available tools
+        self._use_httpx = False
+        self._use_curl = False
+
+        # Check for httpx first
+        httpx_path = self.tools_config.get("httpx", "httpx")
+        if shutil.which(httpx_path) or shutil.which("httpx"):
+            self._use_httpx = True
+            self.required_tools = ["httpx"]
+        else:
+            # Try curl as fallback
+            curl_path = self.tools_config.get("curl", "curl")
+            if shutil.which(curl_path) or shutil.which("curl"):
+                self._use_curl = True
+                self.required_tools = ["curl"]
+            else:
+                # No external tools - will use Python fallback
+                self.required_tools = []
+
+    def is_available(self) -> bool:
+        """Override to always return True since we have Python fallback."""
+        if self._use_httpx or self._use_curl:
+            return True
+        # Python fallback is always available
+        return True
 
     async def run(
         self, target: str, module_config: dict, log_callback: callable = None
@@ -26,29 +50,46 @@ class ProbeModule(BaseModule):
         """Probe subdomains to check if they're alive.
 
         Args:
-            target: Not used directly - uses subdomains from module_config.
+            target: Main target domain.
             module_config: Module configuration with 'subdomains' list.
             log_callback: Callback for log messages.
 
         Yields:
-            Output lines with alive subdomain info.
+            Output lines with subdomain probe results.
         """
         subdomains = module_config.get("subdomains", [])
         if not subdomains:
-            # If no subdomains provided, just probe the main target
             subdomains = [target]
 
         timeout = module_config.get("timeout", 120)
 
         if log_callback:
-            log_callback(f"[probe] Checking {len(subdomains)} subdomains...")
+            log_callback(f"[probe] Received {len(subdomains)} subdomains to check")
+            log_callback(f"[probe] Subdomains: {subdomains[:5]}{'...' if len(subdomains) > 5 else ''}")
 
-        if "httpx" in self.required_tools:
+        results_count = 0
+
+        if self._use_httpx:
+            if log_callback:
+                log_callback("[probe] Using httpx")
             async for line in self._run_httpx(subdomains, timeout, log_callback):
+                results_count += 1
+                yield line
+        elif self._use_curl:
+            if log_callback:
+                log_callback("[probe] Using curl")
+            async for line in self._run_curl(subdomains, timeout, log_callback):
+                results_count += 1
                 yield line
         else:
-            async for line in self._run_curl(subdomains, timeout, log_callback):
+            if log_callback:
+                log_callback("[probe] Using Python fallback (no httpx/curl found)")
+            async for line in self._run_python_probe(subdomains, timeout, log_callback):
+                results_count += 1
                 yield line
+
+        if log_callback:
+            log_callback(f"[probe] Generated {results_count} results")
 
     async def _run_httpx(
         self, subdomains: list[str], timeout: int, log_callback: callable
@@ -56,8 +97,6 @@ class ProbeModule(BaseModule):
         """Use httpx to probe subdomains."""
         tool_path = self.get_tool_path("httpx")
 
-        # Create temp file with subdomains or use stdin
-        # httpx can read from stdin with -l -
         cmd = [
             tool_path,
             "-silent",
@@ -70,57 +109,67 @@ class ProbeModule(BaseModule):
         if log_callback:
             log_callback(f"[probe] Running httpx on {len(subdomains)} targets")
 
-        # Run httpx with subdomains piped to stdin
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
             )
 
-            # Prepare input - one subdomain per line with protocol
             input_data = "\n".join(
                 f"https://{s}" if not s.startswith(("http://", "https://")) else s
                 for s in subdomains
             )
 
-            stdout, _ = await asyncio.wait_for(
+            stdout, stderr = await asyncio.wait_for(
                 process.communicate(input_data.encode()),
                 timeout=timeout
             )
 
-            for line in stdout.decode("utf-8", errors="replace").split("\n"):
+            if stderr and log_callback:
+                err_text = stderr.decode("utf-8", errors="replace").strip()
+                if err_text:
+                    log_callback(f"[probe] httpx stderr: {err_text[:200]}")
+
+            output = stdout.decode("utf-8", errors="replace")
+            for line in output.split("\n"):
                 if line.strip():
                     yield line.strip()
 
         except asyncio.TimeoutError:
             if log_callback:
                 log_callback(f"[probe] Timeout after {timeout}s")
+        except FileNotFoundError:
+            if log_callback:
+                log_callback(f"[probe] httpx not found at {tool_path}")
         except Exception as e:
             if log_callback:
-                log_callback(f"[probe] Error: {e}")
+                log_callback(f"[probe] httpx error: {e}")
 
     async def _run_curl(
         self, subdomains: list[str], timeout: int, log_callback: callable
     ) -> AsyncIterator[str]:
         """Fallback to curl for probing."""
         tool_path = self.get_tool_path("curl")
+        null_device = "NUL" if sys.platform == "win32" else "/dev/null"
 
-        for subdomain in subdomains:
+        for i, subdomain in enumerate(subdomains):
             if not subdomain.startswith(("http://", "https://")):
                 url = f"https://{subdomain}"
             else:
                 url = subdomain
 
+            # Windows-compatible curl command
             cmd = [
                 tool_path,
                 "-s",
-                "-o", "/dev/null",
-                "-w", f"{subdomain}|%{{http_code}}|%{{time_total}}",
-                "-m", "10",  # timeout
+                "-o", null_device,
+                "-w", "%{http_code}",
+                "-m", "10",
                 "--connect-timeout", "5",
-                "-L",  # follow redirects
+                "-L",
+                "-k",  # Allow insecure connections
                 url,
             ]
 
@@ -130,12 +179,83 @@ class ProbeModule(BaseModule):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
-                stdout, _ = await process.communicate()
-                result = stdout.decode().strip()
-                if result:
-                    yield result
+                stdout, _ = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=15
+                )
+                status_code = stdout.decode().strip()
+                yield f"{subdomain}|{status_code}"
+
+                if log_callback and (i + 1) % 10 == 0:
+                    log_callback(f"[probe] Checked {i + 1}/{len(subdomains)} subdomains")
+
+            except asyncio.TimeoutError:
+                yield f"{subdomain}|000"
+            except Exception as e:
+                if log_callback:
+                    log_callback(f"[probe] curl error for {subdomain}: {e}")
+                yield f"{subdomain}|000"
+
+    async def _run_python_probe(
+        self, subdomains: list[str], timeout: int, log_callback: callable
+    ) -> AsyncIterator[str]:
+        """Pure Python fallback using asyncio."""
+        import ssl
+        import urllib.request
+        import urllib.error
+
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
+        async def check_subdomain(subdomain: str) -> str:
+            if not subdomain.startswith(("http://", "https://")):
+                url = f"https://{subdomain}"
+            else:
+                url = subdomain
+
+            loop = asyncio.get_event_loop()
+
+            def do_request():
+                try:
+                    req = urllib.request.Request(
+                        url,
+                        method="HEAD",
+                        headers={"User-Agent": "Mozilla/5.0 ReconAutomator/1.0"}
+                    )
+                    with urllib.request.urlopen(req, timeout=10, context=ssl_context) as resp:
+                        return resp.getcode()
+                except urllib.error.HTTPError as e:
+                    return e.code
+                except Exception:
+                    return 0
+
+            try:
+                status = await asyncio.wait_for(
+                    loop.run_in_executor(None, do_request),
+                    timeout=15
+                )
+                return f"{subdomain}|{status}"
+            except asyncio.TimeoutError:
+                return f"{subdomain}|000"
             except Exception:
-                yield f"{subdomain}|000|0"
+                return f"{subdomain}|000"
+
+        # Process subdomains with concurrency limit
+        semaphore = asyncio.Semaphore(10)
+
+        async def limited_check(subdomain):
+            async with semaphore:
+                return await check_subdomain(subdomain)
+
+        tasks = [limited_check(s) for s in subdomains]
+
+        for i, coro in enumerate(asyncio.as_completed(tasks)):
+            result = await coro
+            yield result
+
+            if log_callback and (i + 1) % 10 == 0:
+                log_callback(f"[probe] Checked {i + 1}/{len(subdomains)} subdomains")
 
     def parse_output(self, raw_output: str) -> list[dict[str, Any]]:
         """Parse probe output into structured data.
@@ -154,12 +274,11 @@ class ProbeModule(BaseModule):
             if not line.strip():
                 continue
 
-            # Try httpx JSON format
+            # Try httpx JSON format first
             try:
                 data = json.loads(line)
                 url = data.get("url", "")
                 status = data.get("status_code", 0)
-                # Extract subdomain from URL
                 subdomain = url.replace("https://", "").replace("http://", "").split("/")[0]
 
                 if subdomain and subdomain not in seen:
@@ -175,13 +294,13 @@ class ProbeModule(BaseModule):
             except json.JSONDecodeError:
                 pass
 
-            # Try curl format: subdomain|status_code|time
+            # Try pipe-delimited format: subdomain|status_code
             if "|" in line:
                 parts = line.split("|")
                 if len(parts) >= 2:
-                    subdomain = parts[0]
+                    subdomain = parts[0].strip()
                     try:
-                        status = int(parts[1])
+                        status = int(parts[1].strip())
                     except ValueError:
                         status = 0
 
@@ -191,7 +310,7 @@ class ProbeModule(BaseModule):
                             "subdomain": subdomain,
                             "url": f"https://{subdomain}",
                             "status_code": status,
-                            "alive": 200 <= status < 500,
+                            "alive": status > 0 and 200 <= status < 500,
                             "type": "probe",
                         })
 
