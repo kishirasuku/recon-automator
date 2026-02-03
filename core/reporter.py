@@ -65,10 +65,12 @@ class ReconReporter:
         # Export individual text files
         self._export_subdomains(results, scan_dir)
         self._export_inactive_subdomains(results, scan_dir)
+        self._export_asn(results, scan_dir)
         self._export_ports(results, scan_dir)
         self._export_technologies(results, scan_dir)
         self._export_directories(results, scan_dir)
         self._export_wayback(results, scan_dir)
+        self._export_screenshots(results, scan_dir)
 
         # Export summary
         self._export_summary(results, target, profile, scan_dir)
@@ -140,6 +142,64 @@ class ReconReporter:
                 f.write("# These subdomains did not respond to HTTP requests\n\n")
                 f.write("\n".join(sorted(set(inactive))))
             logger.info(f"Exported {len(inactive)} inactive subdomains: {path}")
+
+    def _export_asn(self, results: dict[str, dict], scan_dir: Path):
+        """Export ASN information to text file."""
+        asn_result = results.get("asn", {})
+        if asn_result.get("status") != "completed":
+            return
+
+        items = asn_result.get("output", [])
+        if not items:
+            return
+
+        lines = [
+            "# ASN Information",
+            "# Autonomous System Numbers and IP Ranges",
+            "",
+        ]
+
+        # Group by ASN
+        by_asn: dict[str, list[dict]] = {}
+        for item in items:
+            asn = item.get("asn", "unknown")
+            if asn not in by_asn:
+                by_asn[asn] = []
+            by_asn[asn].append(item)
+
+        for asn in sorted(by_asn.keys()):
+            asn_items = by_asn[asn]
+            first = asn_items[0]
+            as_name = first.get("as_name", "")
+            as_country = first.get("as_country", "")
+            cidr = first.get("cidr", "")
+
+            lines.append("=" * 50)
+            lines.append(f"ASN: {asn}")
+            if as_name:
+                lines.append(f"Organization: {as_name}")
+            if as_country:
+                lines.append(f"Country: {as_country}")
+            if cidr:
+                lines.append(f"CIDR: {cidr}")
+            lines.append("-" * 50)
+
+            for item in asn_items:
+                input_val = item.get("input", "")
+                ip = item.get("ip", "")
+                if input_val:
+                    line = f"  {input_val}"
+                    if ip:
+                        line += f" -> {ip}"
+                    lines.append(line)
+
+            lines.append("")
+
+        if lines:
+            path = scan_dir / "asn.txt"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines).rstrip())
+            logger.info(f"Exported {len(items)} ASN records: {path}")
 
     def _export_ports(self, results: dict[str, dict], scan_dir: Path):
         """Export ports to text file."""
@@ -302,6 +362,37 @@ class ReconReporter:
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines).rstrip())
             logger.info(f"Exported {total_count} wayback URLs from {len(by_domain)} domains: {path}")
+
+    def _export_screenshots(self, results: dict[str, dict], scan_dir: Path):
+        """Export screenshot information to text file."""
+        screenshot_result = results.get("screenshot", {})
+        if screenshot_result.get("status") != "completed":
+            return
+
+        items = screenshot_result.get("output", [])
+        if not items:
+            return
+
+        lines = [
+            "# Screenshots",
+            "# Captured screenshots of alive subdomains",
+            "",
+        ]
+
+        for item in items:
+            target = item.get("target", "")
+            path = item.get("path", "")
+            if target:
+                lines.append(f"{target}")
+                if path:
+                    lines.append(f"  -> {path}")
+                lines.append("")
+
+        if lines:
+            path = scan_dir / "screenshots.txt"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines).rstrip())
+            logger.info(f"Exported {len(items)} screenshot records: {path}")
 
     def _export_summary(
         self,

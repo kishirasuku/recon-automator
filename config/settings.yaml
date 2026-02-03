@@ -6,6 +6,8 @@ tools:
   waybackurls: /usr/bin/waybackurls
   gau: /usr/bin/gau
   httpx: /usr/bin/httpx-toolkit  # Also checks for 'httpx' automatically
+  asnmap: /usr/bin/asnmap
+  gowitness: /usr/bin/gowitness
 
 profiles:
   quick:
@@ -17,6 +19,9 @@ profiles:
       probe:
         enabled: true
         timeout: 120
+      asn:
+        enabled: true
+        timeout: 60
       portscan:
         enabled: true
         ports: "80,443,8080,8443"
@@ -27,6 +32,9 @@ profiles:
       wayback:
         enabled: true
         limit: 100
+      screenshot:
+        enabled: false  # Controlled by checkbox in GUI
+        timeout: 300
   standard:
     timeout: 900
     modules:
@@ -36,6 +44,9 @@ profiles:
       probe:
         enabled: true
         timeout: 300
+      asn:
+        enabled: true
+        timeout: 120
       portscan:
         enabled: true
         ports: "top-1000"
@@ -48,6 +59,9 @@ profiles:
       wayback:
         enabled: true
         limit: 500
+      screenshot:
+        enabled: false  # Controlled by checkbox in GUI
+        timeout: 600
   deep:
     timeout: 3600
     modules:
@@ -57,6 +71,9 @@ profiles:
       probe:
         enabled: true
         timeout: 600
+      asn:
+        enabled: true
+        timeout: 180
       portscan:
         enabled: true
         ports: "1-65535"
@@ -69,6 +86,9 @@ profiles:
       wayback:
         enabled: true
         limit: 0
+      screenshot:
+        enabled: false  # Controlled by checkbox in GUI
+        timeout: 900
 
 wordlists:
   common: /usr/share/wordlists/dirb/common.txt

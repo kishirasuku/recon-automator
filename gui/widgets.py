@@ -391,10 +391,12 @@ class ResultsViewer(ctk.CTkToplevel):
     TAB_NAMES = {
         "subdomain": "Subdomains",
         "probe": "Probe Results",
+        "asn": "ASN Info",
         "portscan": "Ports",
         "techdetect": "Technologies",
         "directory": "Directories",
         "wayback": "Wayback URLs",
+        "screenshot": "Screenshots",
     }
 
     def __init__(self, master, results: dict, target: str, **kwargs):
@@ -599,6 +601,52 @@ class ResultsViewer(ctk.CTkToplevel):
                     else:
                         lines.append(f"  {url}")
                 lines.append("")
+
+        elif module_name == "asn":
+            # Group by ASN
+            by_asn: dict[str, list[dict]] = {}
+            for item in output:
+                asn = item.get("asn", "unknown")
+                if asn not in by_asn:
+                    by_asn[asn] = []
+                by_asn[asn].append(item)
+
+            for asn in sorted(by_asn.keys()):
+                items = by_asn[asn]
+                first = items[0]
+                as_name = first.get("as_name", "")
+                as_country = first.get("as_country", "")
+                cidr = first.get("cidr", "")
+
+                lines.append("=" * 50)
+                lines.append(f"ASN: {asn}")
+                if as_name:
+                    lines.append(f"Organization: {as_name}")
+                if as_country:
+                    lines.append(f"Country: {as_country}")
+                if cidr:
+                    lines.append(f"CIDR: {cidr}")
+                lines.append("-" * 50)
+
+                for item in items:
+                    input_val = item.get("input", "")
+                    ip = item.get("ip", "")
+                    if input_val:
+                        line = f"  {input_val}"
+                        if ip:
+                            line += f" -> {ip}"
+                        lines.append(line)
+                lines.append("")
+
+        elif module_name == "screenshot":
+            for item in output:
+                target = item.get("target", "")
+                path = item.get("path", "")
+                if target:
+                    lines.append(f"[OK] {target}")
+                    if path:
+                        lines.append(f"     File: {path}")
+                    lines.append("")
 
         return "\n".join(lines)
 

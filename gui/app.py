@@ -118,12 +118,25 @@ class ReconAutomatorApp(ctk.CTk):
         self.target_input = TargetInput(top_frame, on_submit=self._on_start_scan)
         self.target_input.grid(row=0, column=0, sticky="ew", pady=(0, 10))
 
-        # Profile selector
+        # Profile selector and options row
+        options_frame = ctk.CTkFrame(top_frame, fg_color="transparent")
+        options_frame.grid(row=1, column=0, sticky="ew")
+
         profiles = list(self.config.get("profiles", {}).keys())
         if not profiles:
             profiles = ["quick", "standard", "deep"]
-        self.profile_selector = ProfileSelector(top_frame, profiles)
-        self.profile_selector.grid(row=1, column=0, sticky="w")
+        self.profile_selector = ProfileSelector(options_frame, profiles)
+        self.profile_selector.grid(row=0, column=0, sticky="w")
+
+        # Screenshot checkbox
+        self.screenshot_var = ctk.BooleanVar(value=False)
+        self.screenshot_checkbox = ctk.CTkCheckBox(
+            options_frame,
+            text="Capture Screenshots",
+            variable=self.screenshot_var,
+            font=ctk.CTkFont(size=12),
+        )
+        self.screenshot_checkbox.grid(row=0, column=1, padx=(20, 0), sticky="w")
 
         # --- Control Buttons ---
         button_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -271,7 +284,13 @@ class ReconAutomatorApp(ctk.CTk):
             return
 
         profile = self.profile_selector.get()
-        profile_config = self.config.get("profiles", {}).get(profile, {})
+        profile_config = self.config.get("profiles", {}).get(profile, {}).copy()
+
+        # Handle screenshot option
+        enable_screenshot = self.screenshot_var.get()
+        if "modules" not in profile_config:
+            profile_config["modules"] = {}
+        profile_config["modules"]["screenshot"] = {"enabled": enable_screenshot}
 
         # Store target for results viewer
         self.last_target = target
@@ -283,6 +302,7 @@ class ReconAutomatorApp(ctk.CTk):
         self.view_results_button.configure(state="disabled")
         self.target_input.set_enabled(False)
         self.profile_selector.set_enabled(False)
+        self.screenshot_checkbox.configure(state="disabled")
         self.module_status.reset_all()
         self.log_viewer.clear()
         self.progress.start(f"Scanning {target}...")
@@ -295,12 +315,15 @@ class ReconAutomatorApp(ctk.CTk):
         modules = get_all_modules(self.config)
 
         # Run scan in async loop
+        scan_dir = self.current_scan_dir
         async def run_scan():
             try:
-                results = await self.runner.run_scan(modules, target, profile_config)
+                results = await self.runner.run_scan(
+                    modules, target, profile_config, scan_dir=scan_dir
+                )
                 # Export results
                 self.reporter.export_results(
-                    results, target, profile, self.current_scan_dir
+                    results, target, profile, scan_dir
                 )
                 self.message_queue.put(("scan_complete", results))
             except Exception as e:
@@ -334,6 +357,7 @@ class ReconAutomatorApp(ctk.CTk):
         self.cancel_button.configure(state="disabled")
         self.target_input.set_enabled(True)
         self.profile_selector.set_enabled(True)
+        self.screenshot_checkbox.configure(state="normal")
 
         if results:
             self.last_results = results

@@ -123,18 +123,22 @@ class ReconRunner:
         modules: list,
         target: str,
         profile_config: dict,
+        scan_dir: str = None,
     ) -> dict[str, dict]:
         """Run all enabled modules for a scan with dependency handling.
 
         The scan runs in phases:
         1. Subdomain enumeration
         2. Probe discovered subdomains (check which are alive)
-        3. Run remaining modules (directory uses alive subdomains)
+        3. ASN investigation
+        4. Run remaining modules (directory uses alive subdomains)
+        5. Screenshot capture (if enabled)
 
         Args:
             modules: List of module instances to run.
             target: Target domain.
             profile_config: Profile configuration with module settings.
+            scan_dir: Output directory for the scan (used for screenshots).
 
         Returns:
             Dictionary mapping module names to their results.
@@ -149,7 +153,9 @@ class ReconRunner:
         # Categorize modules
         phase1_modules = []  # subdomain
         phase2_modules = []  # probe
-        phase3_modules = []  # everything else
+        phase3_modules = []  # asn
+        phase4_modules = []  # portscan, techdetect, directory, wayback
+        phase5_modules = []  # screenshot (runs last)
 
         for module in modules:
             mod_config = module_configs.get(module.name, {})
@@ -167,8 +173,12 @@ class ReconRunner:
                 phase1_modules.append((module, mod_config))
             elif module.name == "probe":
                 phase2_modules.append((module, mod_config))
-            else:
+            elif module.name == "asn":
                 phase3_modules.append((module, mod_config))
+            elif module.name == "screenshot":
+                phase5_modules.append((module, mod_config))
+            else:
+                phase4_modules.append((module, mod_config))
 
         self.log(f"Running scan on target: {target}")
 
@@ -226,12 +236,23 @@ class ReconRunner:
             # No probe module, assume all subdomains are alive
             alive_subdomains = discovered_subdomains
 
-        # Phase 3: Run remaining modules
-        if phase3_modules and not self.cancelled:
-            self.log("Phase 3: Running remaining modules")
+        # Phase 3: ASN investigation
+        if phase3_modules and discovered_subdomains and not self.cancelled:
+            self.log("Phase 3: ASN investigation")
+            for module, mod_config in phase3_modules:
+                if self.cancelled:
+                    break
+                mod_config = dict(mod_config)
+                mod_config["subdomains"] = discovered_subdomains
+                result = await self.run_module(module, target, mod_config)
+                self.results[module.name] = result
+
+        # Phase 4: Run remaining modules
+        if phase4_modules and not self.cancelled:
+            self.log("Phase 4: Running remaining modules")
             tasks = []
 
-            for module, mod_config in phase3_modules:
+            for module, mod_config in phase4_modules:
                 mod_config = dict(mod_config)
 
                 # Pass alive subdomains to directory module
@@ -255,6 +276,20 @@ class ReconRunner:
                         "output": [],
                         "raw": "",
                     }
+
+        # Phase 5: Screenshots (runs last, uses alive subdomains)
+        if phase5_modules and alive_subdomains and not self.cancelled:
+            self.log("Phase 5: Capturing screenshots")
+            for module, mod_config in phase5_modules:
+                if self.cancelled:
+                    break
+                mod_config = dict(mod_config)
+                mod_config["targets"] = alive_subdomains
+                # Set screenshot output directory
+                if scan_dir:
+                    mod_config["output_dir"] = str(scan_dir / "screenshots")
+                result = await self.run_module(module, target, mod_config)
+                self.results[module.name] = result
 
         self.running_tasks.clear()
         return self.results

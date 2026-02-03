@@ -7,15 +7,19 @@ from .techdetect import TechDetectModule
 from .directory import DirectoryModule
 from .wayback import WaybackModule
 from .probe import ProbeModule
+from .asn import ASNModule
+from .screenshot import ScreenshotModule
 
 # Module registry - maps module names to their classes
 MODULE_REGISTRY: dict[str, type[BaseModule]] = {
     "subdomain": SubdomainModule,
     "probe": ProbeModule,
+    "asn": ASNModule,
     "portscan": PortScanModule,
     "techdetect": TechDetectModule,
     "directory": DirectoryModule,
     "wayback": WaybackModule,
+    "screenshot": ScreenshotModule,
 }
 
 
@@ -88,10 +92,12 @@ __all__ = [
     "BaseModule",
     "SubdomainModule",
     "ProbeModule",
+    "ASNModule",
     "PortScanModule",
     "TechDetectModule",
     "DirectoryModule",
     "WaybackModule",
+    "ScreenshotModule",
     "MODULE_REGISTRY",
     "get_all_modules",
     "get_module",
