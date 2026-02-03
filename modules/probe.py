@@ -17,17 +17,33 @@ class ProbeModule(BaseModule):
         """Initialize with config."""
         super().__init__(config)
         import shutil
+        import subprocess
 
         # Check available tools
         self._use_httpx = False
         self._use_curl = False
 
-        # Check for httpx first
+        # Check for httpx first (must be projectdiscovery/httpx)
         httpx_path = self.tools_config.get("httpx", "httpx")
-        if shutil.which(httpx_path) or shutil.which("httpx"):
-            self._use_httpx = True
-            self.required_tools = ["httpx"]
-        else:
+        httpx_bin = shutil.which(httpx_path) or shutil.which("httpx")
+        if httpx_bin:
+            # Verify it's projectdiscovery httpx by checking for -silent flag
+            try:
+                result = subprocess.run(
+                    [httpx_bin, "-version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                # projectdiscovery httpx shows version like "Current Version: v1.x.x"
+                output = result.stdout + result.stderr
+                if "projectdiscovery" in output.lower() or "current version" in output.lower():
+                    self._use_httpx = True
+                    self.required_tools = ["httpx"]
+            except Exception:
+                pass
+
+        if not self._use_httpx:
             # Try curl as fallback
             curl_path = self.tools_config.get("curl", "curl")
             if shutil.which(curl_path) or shutil.which("curl"):
