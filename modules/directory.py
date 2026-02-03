@@ -69,11 +69,12 @@ class DirectoryModule(BaseModule):
                 "-w", wordlist_path,
                 "-t", str(threads),
                 "-d", str(depth),
+                "--silent",            # Only print URLs/JSON, turn off logging
                 "--json",              # JSON output for easy parsing
-                "-q",                  # Quiet mode
                 "--no-state",          # Don't save/restore state
                 "-k",                  # Allow insecure TLS
                 "--auto-tune",         # Automatically tune request rate
+                "--auto-bail",         # Stop on excessive errors
             ]
 
             try:
