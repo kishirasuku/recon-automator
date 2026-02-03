@@ -302,12 +302,34 @@ class ProbeModule(BaseModule):
             List of subdomain status dictionaries.
         """
         import json
-        results = []
-        seen = set()
+        # Use dict to track best result per subdomain
+        results_by_subdomain: dict[str, dict[str, Any]] = {}
+
+        def is_better_status(new_status: int, old_status: int) -> bool:
+            """Check if new status is better than old status.
+
+            Priority: 2xx > 3xx > 4xx > 5xx > 0
+            """
+            def status_priority(s: int) -> int:
+                if 200 <= s < 300:
+                    return 5  # 2xx - Best
+                elif 300 <= s < 400:
+                    return 4  # 3xx - Redirect
+                elif 400 <= s < 500:
+                    return 3  # 4xx - Client error (but server responded)
+                elif s >= 500:
+                    return 2  # 5xx - Server error
+                else:
+                    return 1  # 0 or invalid - No response
+            return status_priority(new_status) > status_priority(old_status)
 
         for line in raw_output.strip().split("\n"):
             if not line.strip():
                 continue
+
+            subdomain = None
+            url = None
+            status = 0
 
             # Try httpx JSON format first
             try:
@@ -315,38 +337,38 @@ class ProbeModule(BaseModule):
                 url = data.get("url", "")
                 status = data.get("status_code", 0)
                 subdomain = url.replace("https://", "").replace("http://", "").split("/")[0]
-
-                if subdomain and subdomain not in seen:
-                    seen.add(subdomain)
-                    results.append({
-                        "subdomain": subdomain,
-                        "url": url,
-                        "status_code": status,
-                        "alive": 200 <= status < 500,
-                        "type": "probe",
-                    })
-                continue
             except json.JSONDecodeError:
-                pass
+                # Try pipe-delimited format: subdomain|status_code
+                if "|" in line:
+                    parts = line.split("|")
+                    if len(parts) >= 2:
+                        subdomain = parts[0].strip()
+                        try:
+                            status = int(parts[1].strip())
+                        except ValueError:
+                            status = 0
+                        url = f"https://{subdomain}"
 
-            # Try pipe-delimited format: subdomain|status_code
-            if "|" in line:
-                parts = line.split("|")
-                if len(parts) >= 2:
-                    subdomain = parts[0].strip()
-                    try:
-                        status = int(parts[1].strip())
-                    except ValueError:
-                        status = 0
+            if not subdomain:
+                continue
 
-                    if subdomain and subdomain not in seen:
-                        seen.add(subdomain)
-                        results.append({
-                            "subdomain": subdomain,
-                            "url": f"https://{subdomain}",
-                            "status_code": status,
-                            "alive": status > 0 and 200 <= status < 500,
-                            "type": "probe",
-                        })
+            alive = status > 0 and 200 <= status < 500
+            new_result = {
+                "subdomain": subdomain,
+                "url": url,
+                "status_code": status,
+                "alive": alive,
+                "type": "probe",
+            }
 
-        return results
+            # Update if subdomain not seen or new result is better
+            if subdomain not in results_by_subdomain:
+                results_by_subdomain[subdomain] = new_result
+            else:
+                old_result = results_by_subdomain[subdomain]
+                old_status = old_result.get("status_code", 0)
+                # Update if new status is better
+                if is_better_status(status, old_status):
+                    results_by_subdomain[subdomain] = new_result
+
+        return list(results_by_subdomain.values())
