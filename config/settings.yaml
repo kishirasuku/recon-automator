@@ -2,7 +2,7 @@ tools:
   subfinder: /usr/bin/subfinder
   nmap: /usr/bin/nmap
   whatweb: /usr/bin/whatweb
-  gobuster: /usr/bin/gobuster
+  feroxbuster: /usr/bin/feroxbuster
   waybackurls: /usr/bin/waybackurls
   gau: /usr/bin/gau
   httpx: /usr/bin/httpx-toolkit  # Also checks for 'httpx' automatically

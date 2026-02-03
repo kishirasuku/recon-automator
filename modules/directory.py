@@ -1,6 +1,6 @@
-"""Directory enumeration module using gobuster."""
+"""Directory enumeration module using feroxbuster."""
 
-import re
+import json
 from urllib.parse import urlparse
 from typing import AsyncIterator, Any
 from .base import BaseModule
@@ -8,16 +8,16 @@ from core.runner import run_command
 
 
 class DirectoryModule(BaseModule):
-    """Directory enumeration using gobuster."""
+    """Directory enumeration using feroxbuster."""
 
     name = "directory"
-    description = "Enumerate directories and files using gobuster"
-    required_tools = ["gobuster"]
+    description = "Enumerate directories and files using feroxbuster"
+    required_tools = ["feroxbuster"]
 
     async def run(
         self, target: str, module_config: dict, log_callback: callable = None
     ) -> AsyncIterator[str]:
-        """Run gobuster against the target(s).
+        """Run feroxbuster against the target(s).
 
         Args:
             target: Target domain/URL (used if no subdomains provided).
@@ -25,16 +25,17 @@ class DirectoryModule(BaseModule):
             log_callback: Callback for log messages.
 
         Yields:
-            Output lines from gobuster.
+            Output lines from feroxbuster (JSON format).
         """
         # Get targets - either from alive subdomains or main target
         targets = module_config.get("targets", [])
         if not targets:
             targets = [target]
 
-        tool_path = self.get_tool_path("gobuster")
+        tool_path = self.get_tool_path("feroxbuster")
         timeout_per_target = module_config.get("timeout", 300)
-        threads = module_config.get("threads", 30)
+        threads = module_config.get("threads", 50)
+        depth = module_config.get("depth", 2)
 
         # Get wordlist
         wordlist_key = module_config.get("wordlist", "common")
@@ -64,14 +65,15 @@ class DirectoryModule(BaseModule):
 
             cmd = [
                 tool_path,
-                "dir",
                 "-u", current_target,
                 "-w", wordlist_path,
                 "-t", str(threads),
-                "-q",
-                "--no-progress",
-                "-e",
-                "-r",
+                "-d", str(depth),
+                "--json",              # JSON output for easy parsing
+                "-q",                  # Quiet mode
+                "--no-state",          # Don't save/restore state
+                "-k",                  # Allow insecure TLS
+                "--auto-tune",         # Automatically tune request rate
             ]
 
             try:
@@ -83,10 +85,10 @@ class DirectoryModule(BaseModule):
                 yield f"__ERROR__:{current_target}:{str(e)}"
 
     def parse_output(self, raw_output: str) -> list[dict[str, Any]]:
-        """Parse gobuster output into structured data grouped by target.
+        """Parse feroxbuster JSON output into structured data grouped by target.
 
         Args:
-            raw_output: Raw output from gobuster.
+            raw_output: Raw output from feroxbuster (JSON lines).
 
         Returns:
             List of directory/file dictionaries with target info.
@@ -94,11 +96,6 @@ class DirectoryModule(BaseModule):
         results = []
         seen = set()
         current_target = "unknown"
-
-        # Gobuster output format: URL (Status: CODE) [Size: BYTES]
-        pattern = re.compile(
-            r"(https?://\S+)\s+\(Status:\s*(\d+)\)\s*\[Size:\s*(\d+)\]"
-        )
 
         for line in raw_output.strip().split("\n"):
             line = line.strip()
@@ -114,44 +111,85 @@ class DirectoryModule(BaseModule):
             if line.startswith("__ERROR__:"):
                 continue
 
-            match = pattern.search(line)
-            if match:
-                url = match.group(1)
-                status = int(match.group(2))
-                size = int(match.group(3))
+            # Try to parse JSON (feroxbuster --json output)
+            try:
+                data = json.loads(line)
+
+                # feroxbuster outputs different types: "response", "statistics", etc.
+                if data.get("type") != "response":
+                    continue
+
+                url = data.get("url", "")
+                status = data.get("status", 0)
+                content_length = data.get("content_length", 0)
+                line_count = data.get("line_count", 0)
+                word_count = data.get("word_count", 0)
+                path = data.get("path", "")
+
+                # Skip if no URL
+                if not url:
+                    continue
 
                 # Extract subdomain from URL
                 parsed = urlparse(url)
                 subdomain = parsed.netloc
 
-                unique_key = f"{url}"
+                unique_key = url
                 if unique_key not in seen:
                     seen.add(unique_key)
                     results.append({
                         "url": url,
                         "subdomain": subdomain,
                         "target": current_target,
-                        "path": parsed.path,
+                        "path": path or parsed.path,
                         "status_code": status,
-                        "size": size,
+                        "size": content_length,
+                        "lines": line_count,
+                        "words": word_count,
                         "type": "directory",
                     })
-            elif line.startswith("http"):
-                url = line.split()[0]
-                parsed = urlparse(url)
-                subdomain = parsed.netloc
 
-                unique_key = f"{url}"
-                if unique_key not in seen:
-                    seen.add(unique_key)
-                    results.append({
-                        "url": url,
-                        "subdomain": subdomain,
-                        "target": current_target,
-                        "path": parsed.path,
-                        "status_code": 200,
-                        "size": 0,
-                        "type": "directory",
-                    })
+            except json.JSONDecodeError:
+                # Fallback: try to parse plain text output
+                # Format: STATUS METHOD LINESl WORDSw SIZEc URL
+                # Example: 200      GET      123l      456w     7890c http://example.com/path
+                parts = line.split()
+                if len(parts) >= 6 and parts[0].isdigit():
+                    try:
+                        status = int(parts[0])
+                        # method = parts[1]
+                        url = parts[-1]
+
+                        if not url.startswith("http"):
+                            continue
+
+                        # Parse size info
+                        size = 0
+                        for part in parts[2:-1]:
+                            if part.endswith("c"):
+                                try:
+                                    size = int(part[:-1])
+                                except ValueError:
+                                    pass
+
+                        parsed = urlparse(url)
+                        subdomain = parsed.netloc
+
+                        unique_key = url
+                        if unique_key not in seen:
+                            seen.add(unique_key)
+                            results.append({
+                                "url": url,
+                                "subdomain": subdomain,
+                                "target": current_target,
+                                "path": parsed.path,
+                                "status_code": status,
+                                "size": size,
+                                "lines": 0,
+                                "words": 0,
+                                "type": "directory",
+                            })
+                    except (ValueError, IndexError):
+                        pass
 
         return results
