@@ -335,8 +335,17 @@ class ProbeModule(BaseModule):
             try:
                 data = json.loads(line)
                 url = data.get("url", "")
-                status = data.get("status_code", 0)
-                subdomain = url.replace("https://", "").replace("http://", "").split("/")[0]
+                # httpx-toolkit uses "status-code" (hyphen), not "status_code" (underscore)
+                status = data.get("status-code", data.get("status_code", 0))
+                # Extract subdomain from input field (cleaner) or url
+                input_host = data.get("input", "")
+                if input_host:
+                    subdomain = input_host.replace("https://", "").replace("http://", "").split("/")[0]
+                else:
+                    subdomain = url.replace("https://", "").replace("http://", "").split("/")[0]
+                # Remove port if present (e.g., "example.com:443" -> "example.com")
+                if ":" in subdomain:
+                    subdomain = subdomain.split(":")[0]
             except json.JSONDecodeError:
                 # Try pipe-delimited format: subdomain|status_code
                 if "|" in line:
