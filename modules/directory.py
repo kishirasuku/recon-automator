@@ -63,6 +63,9 @@ class DirectoryModule(BaseModule):
             # Output marker for target grouping
             yield f"__TARGET__:{current_target}"
 
+            # Build feroxbuster command
+            if log_callback:
+                log_callback(f"[directory] Timeout: {timeout_per_target}s, Threads: {threads}, Depth: {depth}")
             cmd = [
                 tool_path,
                 "-u", current_target,
@@ -74,12 +77,25 @@ class DirectoryModule(BaseModule):
                 "--no-state",          # Don't save/restore state
                 "-k",                  # Allow insecure TLS
                 "--auto-tune",         # Automatically tune request rate
-                "--auto-bail",         # Stop on excessive errors
+                "-n",                  # No recursion (use -d for depth control)
             ]
 
+            # Add status code filter if specified
+            status_codes = module_config.get("status_codes", "")
+            if status_codes:
+                cmd.extend(["-s", status_codes])
+
+            if log_callback:
+                log_callback(f"[directory] Command: {' '.join(cmd)}")
+
+            line_count = 0
             try:
                 async for line in run_command(cmd, timeout=timeout_per_target, log_callback=log_callback):
+                    line_count += 1
                     yield line
+
+                if log_callback:
+                    log_callback(f"[directory] Received {line_count} lines from feroxbuster")
             except Exception as e:
                 if log_callback:
                     log_callback(f"[directory] Error scanning {current_target}: {e}")
