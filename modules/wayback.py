@@ -104,6 +104,7 @@ class WaybackModule(BaseModule):
             # Parse URL for additional info
             try:
                 parsed = urlparse(url)
+                domain = parsed.netloc
                 path = parsed.path
                 extension = ""
                 if "." in path:
@@ -128,6 +129,7 @@ class WaybackModule(BaseModule):
 
                 results.append({
                     "url": url,
+                    "domain": domain,
                     "path": path,
                     "extension": extension,
                     "category": category,
@@ -137,6 +139,7 @@ class WaybackModule(BaseModule):
             except Exception:
                 results.append({
                     "url": url,
+                    "domain": "unknown",
                     "path": "",
                     "extension": "",
                     "category": "unknown",

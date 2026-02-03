@@ -578,13 +578,27 @@ class ResultsViewer(ctk.CTkToplevel):
                 lines.append("")
 
         elif module_name == "wayback":
+            # Group by domain
+            by_domain: dict[str, list[dict]] = {}
             for item in output:
-                url = item.get("url", "")
-                category = item.get("category", "")
-                if category and category != "unknown":
-                    lines.append(f"{url}  [{category}]")
-                else:
-                    lines.append(url)
+                domain = item.get("domain", "unknown")
+                if domain not in by_domain:
+                    by_domain[domain] = []
+                by_domain[domain].append(item)
+
+            for domain in sorted(by_domain.keys()):
+                items = by_domain[domain]
+                lines.append("=" * 50)
+                lines.append(f"[{domain}] - {len(items)} URLs")
+                lines.append("=" * 50)
+                for item in items:
+                    url = item.get("url", "")
+                    category = item.get("category", "")
+                    if category and category not in ["unknown", "page"]:
+                        lines.append(f"  {url}  [{category}]")
+                    else:
+                        lines.append(f"  {url}")
+                lines.append("")
 
         return "\n".join(lines)
 

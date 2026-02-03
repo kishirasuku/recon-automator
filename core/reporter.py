@@ -258,22 +258,50 @@ class ReconReporter:
             logger.info(f"Exported {total_count} directories from {len(by_subdomain)} subdomains: {path}")
 
     def _export_wayback(self, results: dict[str, dict], scan_dir: Path):
-        """Export wayback URLs to text file."""
+        """Export wayback URLs to text file, grouped by domain."""
         wayback_result = results.get("wayback", {})
         if wayback_result.get("status") != "completed":
             return
 
-        urls = [
-            item["url"]
-            for item in wayback_result.get("output", [])
-            if "url" in item
-        ]
+        # Group URLs by domain
+        by_domain: dict[str, list[dict]] = {}
+        for item in wayback_result.get("output", []):
+            if "url" in item:
+                domain = item.get("domain", "unknown")
+                if domain not in by_domain:
+                    by_domain[domain] = []
+                by_domain[domain].append(item)
 
-        if urls:
+        if not by_domain:
+            return
+
+        lines = []
+        total_count = 0
+
+        for domain in sorted(by_domain.keys()):
+            items = by_domain[domain]
+            total_count += len(items)
+
+            lines.append("=" * 60)
+            lines.append(f"[{domain}]")
+            lines.append(f"Found: {len(items)} URLs")
+            lines.append("=" * 60)
+
+            for item in items:
+                url = item["url"]
+                category = item.get("category", "")
+                if category and category != "page":
+                    lines.append(f"  {url}  [{category}]")
+                else:
+                    lines.append(f"  {url}")
+
+            lines.append("")  # Empty line between domains
+
+        if lines:
             path = scan_dir / "wayback.txt"
             with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(urls))
-            logger.info(f"Exported {len(urls)} wayback URLs: {path}")
+                f.write("\n".join(lines).rstrip())
+            logger.info(f"Exported {total_count} wayback URLs from {len(by_domain)} domains: {path}")
 
     def _export_summary(
         self,
