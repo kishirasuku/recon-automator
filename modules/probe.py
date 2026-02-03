@@ -23,9 +23,15 @@ class ProbeModule(BaseModule):
         self._use_httpx = False
         self._use_curl = False
 
-        # Check for httpx first (must be projectdiscovery/httpx)
+        # Check for httpx first (must be projectdiscovery/httpx or httpx-toolkit)
         httpx_path = self.tools_config.get("httpx", "httpx")
-        httpx_bin = shutil.which(httpx_path) or shutil.which("httpx")
+        # Try multiple possible names: httpx-toolkit (Kali/Debian), httpx
+        httpx_bin = (
+            shutil.which(httpx_path) or
+            shutil.which("httpx-toolkit") or
+            shutil.which("httpx")
+        )
+        self._httpx_bin = httpx_bin  # Store the found binary path
         if httpx_bin:
             # Verify it's projectdiscovery httpx by checking for -silent flag
             try:
@@ -110,8 +116,8 @@ class ProbeModule(BaseModule):
     async def _run_httpx(
         self, subdomains: list[str], timeout: int, log_callback: callable
     ) -> AsyncIterator[str]:
-        """Use httpx to probe subdomains."""
-        tool_path = self.get_tool_path("httpx")
+        """Use httpx (or httpx-toolkit) to probe subdomains."""
+        tool_path = self._httpx_bin or self.get_tool_path("httpx")
 
         cmd = [
             tool_path,

@@ -5,7 +5,7 @@ tools:
   gobuster: /usr/bin/gobuster
   waybackurls: /usr/bin/waybackurls
   gau: /usr/bin/gau
-  httpx: /usr/bin/httpx
+  httpx: /usr/bin/httpx-toolkit  # Also checks for 'httpx' automatically
 
 profiles:
   quick:
