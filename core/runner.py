@@ -311,7 +311,7 @@ class ReconRunner:
         if phase6_modules and not self.cancelled:
             self.log("Phase 6: Analyzing parameters for vulnerabilities")
 
-            # Collect URLs from previous modules
+            # Collect URLs from previous modules (current scan results)
             all_urls = set()
 
             # From wayback
@@ -341,6 +341,12 @@ class ReconRunner:
                         # Relative URL with params - prepend target
                         all_urls.add(f"https://{target}{finding}")
 
+            # If no URLs from current scan, try loading from history
+            if not all_urls:
+                self.log("No URLs from current scan, checking history...")
+                history_urls = self._load_urls_from_history(target)
+                all_urls.update(history_urls)
+
             if all_urls:
                 self.log(f"Collected {len(all_urls)} URLs with parameters")
                 for module, mod_config in phase6_modules:
@@ -357,6 +363,59 @@ class ReconRunner:
 
         self.running_tasks.clear()
         return self.results
+
+    def _load_urls_from_history(self, target: str) -> set[str]:
+        """Load URLs with parameters from historical scan data.
+
+        Args:
+            target: Target domain.
+
+        Returns:
+            Set of URLs with query parameters.
+        """
+        from core.history import HistoryManager
+
+        urls = set()
+        history_manager = HistoryManager()
+
+        try:
+            history = history_manager.load_history(target)
+
+            # From wayback history
+            for key, item in history.get("wayback", {}).items():
+                if item.get("is_removed", False):
+                    continue
+                data = item.get("data", {})
+                url = data.get("url", key)
+                if url and "?" in url:
+                    urls.add(url)
+
+            # From directory history
+            for key, item in history.get("directories", {}).items():
+                if item.get("is_removed", False):
+                    continue
+                data = item.get("data", {})
+                url = data.get("url", key)
+                if url and "?" in url:
+                    urls.add(url)
+
+            # From jsanalyze history
+            for key, item in history.get("jsanalyze", {}).items():
+                if item.get("is_removed", False):
+                    continue
+                data = item.get("data", {})
+                finding = data.get("finding", "")
+                if finding.startswith("http") and "?" in finding:
+                    urls.add(finding)
+                elif finding.startswith("/") and "?" in finding:
+                    urls.add(f"https://{target}{finding}")
+
+            self.log(f"Loaded {len(urls)} URLs from history")
+
+        except Exception as e:
+            logger.warning(f"Failed to load URLs from history: {e}")
+
+        return urls
 
     async def cancel_scan(self):
         """Cancel all running modules."""
