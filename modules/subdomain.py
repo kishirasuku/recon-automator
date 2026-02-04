@@ -28,11 +28,19 @@ class SubdomainModule(BaseModule):
         tool_path = self.get_tool_path("subfinder")
         timeout = module_config.get("timeout", 120)
 
+        # Sources known to cause crashes
+        default_exclude = ["digitorus"]
+        exclude_sources = module_config.get("exclude_sources", default_exclude)
+
         cmd = [
             tool_path,
             "-d", target,
             "-silent",
         ]
+
+        # Add source exclusions if specified
+        if exclude_sources:
+            cmd.extend(["-es", ",".join(exclude_sources)])
 
         if log_callback:
             log_callback(f"[subdomain] Running: {' '.join(cmd)}")

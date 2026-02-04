@@ -18,6 +18,8 @@ profiles:
       subdomain:
         enabled: true
         timeout: 60
+        exclude_sources:
+          - digitorus
       probe:
         enabled: true
         timeout: 120
@@ -48,6 +50,8 @@ profiles:
       subdomain:
         enabled: true
         timeout: 180
+        exclude_sources:
+          - digitorus
       probe:
         enabled: true
         timeout: 300
@@ -83,6 +87,8 @@ profiles:
       subdomain:
         enabled: true
         timeout: 600
+        exclude_sources:
+          - digitorus
       probe:
         enabled: true
         timeout: 600
