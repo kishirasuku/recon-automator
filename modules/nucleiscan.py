@@ -203,17 +203,26 @@ class NucleiScanModule(BaseModule):
         if severity_filter:
             cmd.extend(["-severity", ",".join(severity_filter)])
 
-        # Add templates
+        # Separate template paths and tags
+        template_paths = []
+        template_tags = []
         for template in templates:
             if template.startswith("/") or template.endswith(".yaml"):
-                # It's a path
-                cmd.extend(["-t", template])
+                template_paths.append(template)
             else:
-                # It's a tag
-                cmd.extend(["-tags", template])
+                template_tags.append(template)
+
+        # Add template paths
+        for path in template_paths:
+            cmd.extend(["-t", path])
+
+        # Add tags as comma-separated list (nuclei's expected format)
+        if template_tags:
+            cmd.extend(["-tags", ",".join(template_tags)])
 
         if log_callback:
-            log_callback(f"[nucleiscan] Running: {' '.join(cmd[:8])}...")
+            # Show full command for debugging
+            log_callback(f"[nucleiscan] Running: {' '.join(cmd)}")
 
         finding_count = 0
         try:
