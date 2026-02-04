@@ -398,12 +398,31 @@ class ReconAutomatorApp(ctk.CTk):
 
     def on_closing(self):
         """Handle window close event."""
-        if self.is_scanning:
-            # Cancel running scan
-            asyncio.run_coroutine_threadsafe(self.runner.cancel_scan(), self.loop)
+        if self.loop and self.loop.is_running():
+            async def cleanup():
+                """Clean up all pending tasks."""
+                # Cancel running scan if any
+                if self.is_scanning:
+                    await self.runner.cancel_scan()
 
-        # Stop event loop
-        if self.loop:
+                # Cancel all remaining tasks
+                tasks = [t for t in asyncio.all_tasks(self.loop)
+                         if t is not asyncio.current_task()]
+                for task in tasks:
+                    task.cancel()
+
+                # Wait for all tasks to complete
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Run cleanup and wait for it to complete
+            future = asyncio.run_coroutine_threadsafe(cleanup(), self.loop)
+            try:
+                future.result(timeout=5.0)  # Wait up to 5 seconds
+            except Exception:
+                pass  # Ignore errors during cleanup
+
+            # Stop event loop
             self.loop.call_soon_threadsafe(self.loop.stop)
 
         self.destroy()
