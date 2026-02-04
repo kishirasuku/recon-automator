@@ -41,6 +41,9 @@ profiles:
         timeout: 120
         max_files: 20
         scan_secrets: true
+      paramanalyze:
+        enabled: true
+        timeout: 60
       screenshot:
         enabled: false  # Controlled by checkbox in GUI
         timeout: 300
@@ -78,6 +81,9 @@ profiles:
         timeout: 300
         max_files: 50
         scan_secrets: true
+      paramanalyze:
+        enabled: true
+        timeout: 120
       screenshot:
         enabled: false  # Controlled by checkbox in GUI
         timeout: 600
@@ -115,6 +121,9 @@ profiles:
         timeout: 600
         max_files: 100
         scan_secrets: true
+      paramanalyze:
+        enabled: true
+        timeout: 180
       screenshot:
         enabled: false  # Controlled by checkbox in GUI
         timeout: 900

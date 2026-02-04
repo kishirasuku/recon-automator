@@ -154,8 +154,9 @@ class ReconRunner:
         phase1_modules = []  # subdomain
         phase2_modules = []  # probe
         phase3_modules = []  # asn
-        phase4_modules = []  # portscan, techdetect, directory, wayback
-        phase5_modules = []  # screenshot (runs last)
+        phase4_modules = []  # portscan, techdetect, directory, wayback, jsanalyze
+        phase5_modules = []  # screenshot
+        phase6_modules = []  # paramanalyze (needs results from phase 4)
 
         for module in modules:
             mod_config = module_configs.get(module.name, {})
@@ -177,6 +178,8 @@ class ReconRunner:
                 phase3_modules.append((module, mod_config))
             elif module.name == "screenshot":
                 phase5_modules.append((module, mod_config))
+            elif module.name == "paramanalyze":
+                phase6_modules.append((module, mod_config))
             else:
                 phase4_modules.append((module, mod_config))
 
@@ -290,7 +293,7 @@ class ReconRunner:
                         "raw": "",
                     }
 
-        # Phase 5: Screenshots (runs last, uses alive subdomains)
+        # Phase 5: Screenshots (uses alive subdomains)
         if phase5_modules and alive_subdomains and not self.cancelled:
             self.log("Phase 5: Capturing screenshots")
             for module, mod_config in phase5_modules:
@@ -303,6 +306,54 @@ class ReconRunner:
                     mod_config["output_dir"] = str(scan_dir / "screenshots")
                 result = await self.run_module(module, target, mod_config)
                 self.results[module.name] = result
+
+        # Phase 6: Parameter analysis (needs URLs from wayback, directory, jsanalyze)
+        if phase6_modules and not self.cancelled:
+            self.log("Phase 6: Analyzing parameters for vulnerabilities")
+
+            # Collect URLs from previous modules
+            all_urls = set()
+
+            # From wayback
+            wayback_result = self.results.get("wayback", {})
+            if wayback_result.get("status") == "completed":
+                for item in wayback_result.get("output", []):
+                    url = item.get("url", "")
+                    if url and "?" in url:
+                        all_urls.add(url)
+
+            # From directory
+            directory_result = self.results.get("directory", {})
+            if directory_result.get("status") == "completed":
+                for item in directory_result.get("output", []):
+                    url = item.get("url", "")
+                    if url and "?" in url:
+                        all_urls.add(url)
+
+            # From jsanalyze (endpoints that look like URLs with params)
+            jsanalyze_result = self.results.get("jsanalyze", {})
+            if jsanalyze_result.get("status") == "completed":
+                for item in jsanalyze_result.get("output", []):
+                    finding = item.get("finding", "")
+                    if finding.startswith("http") and "?" in finding:
+                        all_urls.add(finding)
+                    elif finding.startswith("/") and "?" in finding:
+                        # Relative URL with params - prepend target
+                        all_urls.add(f"https://{target}{finding}")
+
+            if all_urls:
+                self.log(f"Collected {len(all_urls)} URLs with parameters")
+                for module, mod_config in phase6_modules:
+                    if self.cancelled:
+                        break
+                    mod_config = dict(mod_config)
+                    mod_config["urls"] = list(all_urls)
+                    result = await self.run_module(module, target, mod_config)
+                    self.results[module.name] = result
+            else:
+                self.log("No URLs with parameters found for analysis")
+                for module, mod_config in phase6_modules:
+                    self.update_progress(module.name, "skipped")
 
         self.running_tasks.clear()
         return self.results

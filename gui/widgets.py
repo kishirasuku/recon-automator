@@ -405,6 +405,7 @@ class ResultsViewer(ctk.CTkToplevel):
         "directory": "Directories",
         "wayback": "Wayback URLs",
         "jsanalyze": "JS Analysis",
+        "paramanalyze": "Vuln Params",
         "screenshot": "Screenshots",
     }
 
@@ -747,6 +748,53 @@ class ResultsViewer(ctk.CTkToplevel):
                         elif sensitivity == "medium":
                             marker += "[*] "
                         lines.append(f"  {marker}{finding}")
+
+        elif module_name == "paramanalyze":
+            # Group by category
+            by_category: dict[str, list[dict]] = {}
+            for item in output:
+                category = item.get("category", "unknown")
+                if category not in by_category:
+                    by_category[category] = []
+                by_category[category].append(item)
+
+            # Severity order
+            severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+            # Sort categories by severity
+            sorted_categories = sorted(by_category.keys(), key=lambda c: (
+                min(severity_order.get(i.get("severity", "low"), 4) for i in by_category[c]),
+                c
+            ))
+
+            for category in sorted_categories:
+                cat_items = by_category[category]
+                if not cat_items:
+                    continue
+
+                severity = cat_items[0].get("severity", "medium").upper()
+                description = cat_items[0].get("description", category)
+
+                lines.append("=" * 55)
+                lines.append(f"[{severity}] {description}")
+                lines.append(f"Parameters: {len(cat_items)}")
+                lines.append("=" * 55)
+
+                # Sort by count
+                sorted_items = sorted(cat_items, key=lambda x: -x.get("count", 0))
+
+                for item in sorted_items:
+                    param = item.get("param", "")
+                    count = item.get("count", 0)
+                    sample_urls = item.get("sample_urls", [])
+                    marker = "[NEW] " if item.get("is_new", False) else ""
+
+                    lines.append(f"  {marker}{param}= ({count} URLs)")
+                    for url in sample_urls[:2]:
+                        lines.append(f"      {url}")
+                    if len(sample_urls) > 2:
+                        lines.append(f"      ... +{len(sample_urls) - 2} more")
+                lines.append("")
 
         else:
             # Fallback for unknown modules

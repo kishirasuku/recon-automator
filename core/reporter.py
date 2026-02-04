@@ -82,6 +82,7 @@ class ReconReporter:
         self._export_wayback(results, scan_dir)
         self._export_screenshots(results, scan_dir)
         self._export_jsanalyze(results, scan_dir)
+        self._export_paramanalyze(results, scan_dir)
 
         # Export summary
         self._export_summary(results, target, profile, scan_dir)
@@ -577,6 +578,111 @@ class ReconReporter:
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines).rstrip())
             logger.info(f"Exported {len(secrets)} potential JS secrets: {path}")
+
+    def _export_paramanalyze(self, results: dict[str, dict], scan_dir: Path):
+        """Export parameter analysis results to text files."""
+        param_result = results.get("paramanalyze", {})
+        if param_result.get("status") != "completed":
+            return
+
+        items = param_result.get("output", [])
+        if not items:
+            return
+
+        # Group by category
+        by_category: dict[str, list[dict]] = {}
+        for item in items:
+            category = item.get("category", "unknown")
+            if category not in by_category:
+                by_category[category] = []
+            by_category[category].append(item)
+
+        # Severity order for sorting
+        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+        # Write individual files per category and a combined file
+        all_lines = [
+            "# Vulnerable Parameter Analysis",
+            "# Parameters that may be susceptible to various attacks",
+            f"# Total parameters found: {len(items)}",
+            "",
+        ]
+
+        # Sort categories by severity
+        sorted_categories = sorted(by_category.keys(), key=lambda c: (
+            min(severity_order.get(i.get("severity", "low"), 4) for i in by_category[c]),
+            c
+        ))
+
+        for category in sorted_categories:
+            cat_items = by_category[category]
+            if not cat_items:
+                continue
+
+            # Get severity from first item
+            severity = cat_items[0].get("severity", "medium").upper()
+            description = cat_items[0].get("description", category)
+
+            # Category header
+            lines = [
+                "=" * 60,
+                f"[{severity}] {description}",
+                f"Parameters: {len(cat_items)}",
+                "=" * 60,
+                "",
+            ]
+
+            # Sort by count within category
+            sorted_items = sorted(cat_items, key=lambda x: -x.get("count", 0))
+
+            for item in sorted_items:
+                param = item.get("param", "")
+                count = item.get("count", 0)
+                sample_urls = item.get("sample_urls", [])
+                marker = "[NEW] " if item.get("is_new", False) else ""
+
+                lines.append(f"{marker}{param}= (found in {count} URLs)")
+                for url in sample_urls[:3]:
+                    lines.append(f"    {url}")
+                if len(sample_urls) > 3:
+                    lines.append(f"    ... and {len(sample_urls) - 3} more")
+                lines.append("")
+
+            all_lines.extend(lines)
+
+            # Write category-specific file
+            cat_path = scan_dir / f"params_{category}.txt"
+            with open(cat_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines).rstrip())
+
+        # Write combined file
+        combined_path = scan_dir / "params_all.txt"
+        with open(combined_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(all_lines).rstrip())
+
+        # Export Nuclei-compatible URL lists
+        nuclei_dir = scan_dir / "nuclei"
+        nuclei_dir.mkdir(exist_ok=True)
+
+        for category, cat_items in by_category.items():
+            urls = set()
+            for item in cat_items:
+                urls.update(item.get("sample_urls", []))
+            if urls:
+                nuclei_path = nuclei_dir / f"{category}.txt"
+                with open(nuclei_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(sorted(urls)))
+
+        # Export Burp-compatible URL list
+        all_urls = set()
+        for item in items:
+            all_urls.update(item.get("sample_urls", []))
+        if all_urls:
+            burp_path = scan_dir / "burp_targets.txt"
+            with open(burp_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(sorted(all_urls)))
+
+        logger.info(f"Exported {len(items)} vulnerable parameters: {combined_path}")
 
     def _export_summary(
         self,
