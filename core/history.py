@@ -3,8 +3,145 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from loguru import logger
+
+
+class ScanIndex:
+    """Global index of all scanned domains."""
+
+    def __init__(self, output_dir: str = "./output"):
+        """Initialize the scan index.
+
+        Args:
+            output_dir: Base directory for output files.
+        """
+        self.output_dir = Path(output_dir)
+        self.index_path = self.output_dir / ".scandb" / "index.json"
+
+    def _ensure_dir(self):
+        """Ensure the index directory exists."""
+        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def load_index(self) -> dict:
+        """Load the global scan index.
+
+        Returns:
+            Index dictionary.
+        """
+        if self.index_path.exists():
+            try:
+                with open(self.index_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                logger.warning(f"Failed to load scan index: {e}")
+
+        return {"domains": {}, "last_updated": datetime.now().isoformat()}
+
+    def save_index(self, index: dict):
+        """Save the global scan index.
+
+        Args:
+            index: Index dictionary to save.
+        """
+        self._ensure_dir()
+        index["last_updated"] = datetime.now().isoformat()
+
+        with open(self.index_path, "w", encoding="utf-8") as f:
+            json.dump(index, f, indent=2, ensure_ascii=False)
+
+    def register_scan(
+        self,
+        domain: str,
+        profile: str,
+        modules_run: list[str],
+        scan_dir: str,
+        results_summary: dict,
+    ):
+        """Register a completed scan in the index.
+
+        Args:
+            domain: Target domain.
+            profile: Profile used for the scan.
+            modules_run: List of modules that were run.
+            scan_dir: Directory where results are stored.
+            results_summary: Summary of results (counts per module).
+        """
+        index = self.load_index()
+        timestamp = datetime.now().isoformat()
+
+        if domain not in index["domains"]:
+            index["domains"][domain] = {
+                "first_scan": timestamp,
+                "last_scan": timestamp,
+                "scan_count": 0,
+                "scans": [],
+            }
+
+        domain_entry = index["domains"][domain]
+        domain_entry["last_scan"] = timestamp
+        domain_entry["scan_count"] += 1
+
+        # Add scan record (keep last 20 scans)
+        scan_record = {
+            "timestamp": timestamp,
+            "profile": profile,
+            "modules_run": modules_run,
+            "directory": str(scan_dir),
+            "results_summary": results_summary,
+        }
+        domain_entry["scans"].insert(0, scan_record)
+        domain_entry["scans"] = domain_entry["scans"][:20]
+
+        self.save_index(index)
+        logger.info(f"Registered scan for {domain} in index")
+
+    def get_all_domains(self) -> list[dict]:
+        """Get list of all scanned domains with summary info.
+
+        Returns:
+            List of domain info dictionaries, sorted by last scan date.
+        """
+        index = self.load_index()
+        domains = []
+
+        for domain, info in index.get("domains", {}).items():
+            domains.append({
+                "domain": domain,
+                "first_scan": info.get("first_scan", ""),
+                "last_scan": info.get("last_scan", ""),
+                "scan_count": info.get("scan_count", 0),
+                "last_profile": info["scans"][0]["profile"] if info.get("scans") else "",
+            })
+
+        # Sort by last scan date (most recent first)
+        domains.sort(key=lambda x: x.get("last_scan", ""), reverse=True)
+        return domains
+
+    def get_domain_scans(self, domain: str) -> list[dict]:
+        """Get all scans for a specific domain.
+
+        Args:
+            domain: Target domain.
+
+        Returns:
+            List of scan records.
+        """
+        index = self.load_index()
+        domain_info = index.get("domains", {}).get(domain, {})
+        return domain_info.get("scans", [])
+
+    def get_domain_info(self, domain: str) -> Optional[dict]:
+        """Get info for a specific domain.
+
+        Args:
+            domain: Target domain.
+
+        Returns:
+            Domain info dictionary or None.
+        """
+        index = self.load_index()
+        return index.get("domains", {}).get(domain)
 
 
 class HistoryManager:
@@ -121,6 +258,7 @@ class HistoryManager:
             "directory": self._merge_directories,
             "wayback": self._merge_wayback,
             "screenshot": self._merge_screenshots,
+            "jsanalyze": self._merge_jsanalyze,
         }
 
         for module_name, handler in module_handlers.items():
@@ -488,6 +626,50 @@ class HistoryManager:
 
         return result
 
+    def _merge_jsanalyze(self, history: dict, result: dict, timestamp: str) -> dict:
+        """Merge JavaScript analysis results with history."""
+        history_data = history.setdefault("jsanalyze", {})
+        current_items = set()
+
+        for item in result.get("output", []):
+            finding = item.get("finding", "")
+            item_type = item.get("type", "")
+            if not finding:
+                continue
+
+            key = f"{item_type}_{finding}"
+            current_items.add(key)
+
+            if key in history_data:
+                item["is_new"] = False
+                item["first_seen"] = history_data[key].get("first_seen", timestamp)
+                item["last_seen"] = timestamp
+                history_data[key]["last_seen"] = timestamp
+                history_data[key]["is_removed"] = False
+            else:
+                item["is_new"] = True
+                item["first_seen"] = timestamp
+                item["last_seen"] = timestamp
+                history_data[key] = {
+                    "first_seen": timestamp,
+                    "last_seen": timestamp,
+                    "is_removed": False,
+                    "data": item,
+                }
+
+        for key, hist_item in history_data.items():
+            if key not in current_items and not hist_item.get("is_removed", False):
+                hist_item["is_removed"] = True
+                hist_item["removed_at"] = timestamp
+                removed_item = hist_item.get("data", {}).copy()
+                removed_item["is_new"] = False
+                removed_item["is_removed"] = True
+                removed_item["first_seen"] = hist_item.get("first_seen", "")
+                removed_item["last_seen"] = hist_item.get("last_seen", "")
+                result["output"].append(removed_item)
+
+        return result
+
     def get_statistics(self, domain: str) -> dict:
         """Get statistics for a domain's scan history.
 
@@ -507,7 +689,7 @@ class HistoryManager:
             "totals": {},
         }
 
-        for module in ["subdomains", "probe", "asn", "ports", "technologies", "directories", "wayback", "screenshots"]:
+        for module in ["subdomains", "probe", "asn", "ports", "technologies", "directories", "wayback", "screenshots", "jsanalyze"]:
             module_data = history.get(module, {})
             total = len(module_data)
             active = sum(1 for v in module_data.values() if not v.get("is_removed", False))

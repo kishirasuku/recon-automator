@@ -384,6 +384,14 @@ class ProfileSelector(ctk.CTkFrame):
         """
         self.dropdown.configure(state="normal" if enabled else "disabled")
 
+    def set_callback(self, callback: Callable[[str], None]):
+        """Set or update the change callback.
+
+        Args:
+            callback: Function to call when selection changes.
+        """
+        self.dropdown.configure(command=callback)
+
 
 class ResultsViewer(ctk.CTkToplevel):
     """Window for viewing scan results."""
@@ -396,6 +404,7 @@ class ResultsViewer(ctk.CTkToplevel):
         "techdetect": "Technologies",
         "directory": "Directories",
         "wayback": "Wayback URLs",
+        "jsanalyze": "JS Analysis",
         "screenshot": "Screenshots",
     }
 
@@ -496,8 +505,20 @@ class ResultsViewer(ctk.CTkToplevel):
         lines = []
 
         if module_name == "subdomain":
-            for item in output:
-                lines.append(item.get("subdomain", ""))
+            # Sort: new first, then existing, then removed
+            sorted_output = sorted(output, key=lambda x: (
+                x.get("is_removed", False),
+                not x.get("is_new", False),
+                x.get("subdomain", "")
+            ))
+            for item in sorted_output:
+                subdomain = item.get("subdomain", "")
+                if item.get("is_new", False):
+                    lines.append(f"[NEW]     {subdomain}")
+                elif item.get("is_removed", False):
+                    lines.append(f"[REMOVED] {subdomain}")
+                else:
+                    lines.append(f"          {subdomain}")
 
         elif module_name == "probe":
             alive = []
@@ -505,10 +526,18 @@ class ResultsViewer(ctk.CTkToplevel):
             for item in output:
                 subdomain = item.get("subdomain", "")
                 status = item.get("status_code", 0)
-                if item.get("alive", False):
-                    alive.append(f"[ALIVE] {subdomain} (HTTP {status})")
+                # Add new/removed marker
+                if item.get("is_new", False):
+                    marker = "[NEW] "
+                elif item.get("is_removed", False):
+                    marker = "[REM] "
                 else:
-                    dead.append(f"[DEAD]  {subdomain} (HTTP {status})")
+                    marker = ""
+
+                if item.get("alive", False):
+                    alive.append(f"{marker}[ALIVE] {subdomain} (HTTP {status})")
+                else:
+                    dead.append(f"{marker}[DEAD]  {subdomain} (HTTP {status})")
 
             if alive:
                 lines.append("=== ALIVE SUBDOMAINS ===")

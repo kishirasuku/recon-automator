@@ -11,6 +11,7 @@ from loguru import logger
 
 from core.runner import ReconRunner
 from core.reporter import ReconReporter
+from core.history import ScanIndex, HistoryManager
 from modules import get_all_modules, check_module_availability, MODULE_REGISTRY
 from gui.widgets import (
     LogViewer,
@@ -39,9 +40,13 @@ class ReconAutomatorApp(ctk.CTk):
 
         # Initialize components
         self.runner = ReconRunner(max_concurrent=3)
-        self.reporter = ReconReporter(
-            self.config.get("output", {}).get("directory", "./output")
-        )
+        output_dir = self.config.get("output", {}).get("directory", "./output")
+        self.reporter = ReconReporter(output_dir)
+        self.scan_index = ScanIndex(output_dir)
+        self.history_manager = HistoryManager(output_dir)
+
+        # Module selection state
+        self.module_vars: dict[str, ctk.BooleanVar] = {}
 
         # Async event loop in separate thread
         self.loop: Optional[asyncio.AbstractEventLoop] = None
@@ -107,16 +112,31 @@ class ReconAutomatorApp(ctk.CTk):
         """Create all GUI widgets."""
         # Configure grid
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
+        self.grid_rowconfigure(4, weight=1)  # Changed from 3 to 4 for module selection row
 
         # --- Top Section: Target and Profile ---
         top_frame = ctk.CTkFrame(self)
         top_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
         top_frame.grid_columnconfigure(0, weight=1)
 
-        # Target input
-        self.target_input = TargetInput(top_frame, on_submit=self._on_start_scan)
-        self.target_input.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        # Target input row with history button
+        target_row = ctk.CTkFrame(top_frame, fg_color="transparent")
+        target_row.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        target_row.grid_columnconfigure(0, weight=1)
+
+        self.target_input = TargetInput(target_row, on_submit=self._on_start_scan)
+        self.target_input.grid(row=0, column=0, sticky="ew")
+
+        # History button
+        self.history_button = ctk.CTkButton(
+            target_row,
+            text="History",
+            command=self._on_show_history,
+            font=ctk.CTkFont(size=12),
+            height=32,
+            width=80,
+        )
+        self.history_button.grid(row=0, column=1, padx=(10, 0))
 
         # Profile selector and options row
         options_frame = ctk.CTkFrame(top_frame, fg_color="transparent")
@@ -127,6 +147,7 @@ class ReconAutomatorApp(ctk.CTk):
             profiles = ["quick", "standard", "deep"]
         self.profile_selector = ProfileSelector(options_frame, profiles)
         self.profile_selector.grid(row=0, column=0, sticky="w")
+        self.profile_selector.set_callback(self._on_profile_changed)
 
         # Screenshot checkbox
         self.screenshot_var = ctk.BooleanVar(value=False)
@@ -138,9 +159,40 @@ class ReconAutomatorApp(ctk.CTk):
         )
         self.screenshot_checkbox.grid(row=0, column=1, padx=(20, 0), sticky="w")
 
+        # --- Module Selection Section ---
+        module_frame = ctk.CTkFrame(self)
+        module_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
+
+        module_label = ctk.CTkLabel(
+            module_frame,
+            text="Modules:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        module_label.grid(row=0, column=0, padx=10, pady=5, sticky="w")
+
+        # Create checkboxes for each module
+        checkbox_frame = ctk.CTkFrame(module_frame, fg_color="transparent")
+        checkbox_frame.grid(row=0, column=1, sticky="w", padx=5)
+
+        module_names = list(MODULE_REGISTRY.keys())
+        for i, module_name in enumerate(module_names):
+            var = ctk.BooleanVar(value=True)
+            self.module_vars[module_name] = var
+            cb = ctk.CTkCheckBox(
+                checkbox_frame,
+                text=module_name,
+                variable=var,
+                font=ctk.CTkFont(size=11),
+                width=100,
+            )
+            cb.grid(row=0, column=i, padx=5, pady=2)
+
+        # Update checkboxes based on current profile
+        self._on_profile_changed(self.profile_selector.get())
+
         # --- Control Buttons ---
         button_frame = ctk.CTkFrame(self, fg_color="transparent")
-        button_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
+        button_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
 
         self.start_button = ctk.CTkButton(
             button_frame,
@@ -190,11 +242,11 @@ class ReconAutomatorApp(ctk.CTk):
 
         # --- Progress ---
         self.progress = ProgressIndicator(self)
-        self.progress.grid(row=2, column=0, sticky="ew", padx=10, pady=10)
+        self.progress.grid(row=3, column=0, sticky="ew", padx=10, pady=10)
 
         # --- Main Content Area ---
         content_frame = ctk.CTkFrame(self, fg_color="transparent")
-        content_frame.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        content_frame.grid(row=4, column=0, sticky="nsew", padx=10, pady=(0, 10))
         content_frame.grid_columnconfigure(0, weight=3)
         content_frame.grid_columnconfigure(1, weight=1)
         content_frame.grid_rowconfigure(0, weight=1)
@@ -286,10 +338,17 @@ class ReconAutomatorApp(ctk.CTk):
         profile = self.profile_selector.get()
         profile_config = self.config.get("profiles", {}).get(profile, {}).copy()
 
-        # Handle screenshot option
-        enable_screenshot = self.screenshot_var.get()
+        # Apply module selections from checkboxes
         if "modules" not in profile_config:
             profile_config["modules"] = {}
+
+        for module_name, var in self.module_vars.items():
+            if module_name not in profile_config["modules"]:
+                profile_config["modules"][module_name] = {}
+            profile_config["modules"][module_name]["enabled"] = var.get()
+
+        # Handle screenshot option (override with checkbox)
+        enable_screenshot = self.screenshot_var.get()
         profile_config["modules"]["screenshot"] = {"enabled": enable_screenshot}
 
         # Store target for results viewer
@@ -300,9 +359,11 @@ class ReconAutomatorApp(ctk.CTk):
         self.start_button.configure(state="disabled")
         self.cancel_button.configure(state="normal")
         self.view_results_button.configure(state="disabled")
+        self.history_button.configure(state="disabled")
         self.target_input.set_enabled(False)
         self.profile_selector.set_enabled(False)
         self.screenshot_checkbox.configure(state="disabled")
+        self._set_module_checkboxes_enabled(False)
         self.module_status.reset_all()
         self.log_viewer.clear()
         self.progress.start(f"Scanning {target}...")
@@ -355,9 +416,11 @@ class ReconAutomatorApp(ctk.CTk):
         self.is_scanning = False
         self.start_button.configure(state="normal")
         self.cancel_button.configure(state="disabled")
+        self.history_button.configure(state="normal")
         self.target_input.set_enabled(True)
         self.profile_selector.set_enabled(True)
         self.screenshot_checkbox.configure(state="normal")
+        self._set_module_checkboxes_enabled(True)
 
         if results:
             self.last_results = results
@@ -368,6 +431,161 @@ class ReconAutomatorApp(ctk.CTk):
             self.log_viewer.append(f"\nScan complete. Results saved to: {self.current_scan_dir}")
         else:
             self.progress.reset("Cancelled")
+
+    def _set_module_checkboxes_enabled(self, enabled: bool):
+        """Enable or disable all module checkboxes.
+
+        Args:
+            enabled: Whether to enable or disable.
+        """
+        state = "normal" if enabled else "disabled"
+        # Find all checkboxes in the module frame and update their state
+        for widget in self.winfo_children():
+            if isinstance(widget, ctk.CTkFrame):
+                for child in widget.winfo_children():
+                    if isinstance(child, ctk.CTkFrame):
+                        for grandchild in child.winfo_children():
+                            if isinstance(grandchild, ctk.CTkCheckBox):
+                                grandchild.configure(state=state)
+
+    def _on_profile_changed(self, profile: str):
+        """Handle profile selection change - update module checkboxes.
+
+        Args:
+            profile: Selected profile name.
+        """
+        profile_config = self.config.get("profiles", {}).get(profile, {})
+        modules_config = profile_config.get("modules", {})
+
+        for module_name, var in self.module_vars.items():
+            mod_config = modules_config.get(module_name, {})
+            enabled = mod_config.get("enabled", True)
+            var.set(enabled)
+
+    def _on_show_history(self):
+        """Show history dialog with previously scanned domains."""
+        domains = self.scan_index.get_all_domains()
+
+        if not domains:
+            self.log_viewer.append("[INFO] No scan history found")
+            return
+
+        # Create history dialog
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Scan History")
+        dialog.geometry("500x400")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        # Header
+        header = ctk.CTkLabel(
+            dialog,
+            text="Select a domain to load:",
+            font=ctk.CTkFont(size=14, weight="bold"),
+        )
+        header.pack(pady=10)
+
+        # Scrollable frame for domain list
+        scroll_frame = ctk.CTkScrollableFrame(dialog, width=460, height=280)
+        scroll_frame.pack(padx=10, pady=5, fill="both", expand=True)
+
+        def select_domain(domain: str):
+            self.target_input.set(domain)
+            self._load_domain_history(domain)
+            dialog.destroy()
+
+        for domain_info in domains:
+            domain = domain_info["domain"]
+            last_scan = domain_info.get("last_scan", "")[:10]
+            scan_count = domain_info.get("scan_count", 0)
+
+            frame = ctk.CTkFrame(scroll_frame)
+            frame.pack(fill="x", padx=5, pady=2)
+
+            label = ctk.CTkLabel(
+                frame,
+                text=f"{domain}  ({scan_count} scans, last: {last_scan})",
+                font=ctk.CTkFont(size=12),
+            )
+            label.pack(side="left", padx=10, pady=5)
+
+            btn = ctk.CTkButton(
+                frame,
+                text="Load",
+                width=60,
+                command=lambda d=domain: select_domain(d),
+            )
+            btn.pack(side="right", padx=10, pady=5)
+
+        # Close button
+        close_btn = ctk.CTkButton(
+            dialog,
+            text="Close",
+            command=dialog.destroy,
+        )
+        close_btn.pack(pady=10)
+
+    def _load_domain_history(self, domain: str):
+        """Load historical data for a domain and enable View Results.
+
+        Args:
+            domain: Domain to load history for.
+        """
+        history = self.history_manager.load_history(domain)
+
+        if history.get("scan_count", 0) > 0:
+            # Convert history to results format for viewing
+            self.last_target = domain
+            self.last_results = self._history_to_results(history)
+            self.view_results_button.configure(state="normal")
+            self.log_viewer.append(f"[INFO] Loaded history for {domain} ({history.get('scan_count', 0)} scans)")
+        else:
+            self.log_viewer.append(f"[INFO] No history found for {domain}")
+
+    def _history_to_results(self, history: dict) -> dict:
+        """Convert history format to results format for display.
+
+        Args:
+            history: History dictionary from HistoryManager.
+
+        Returns:
+            Results dictionary compatible with ResultsViewer.
+        """
+        results = {}
+
+        # Map history keys to module names
+        mappings = {
+            "subdomains": "subdomain",
+            "probe": "probe",
+            "asn": "asn",
+            "ports": "portscan",
+            "technologies": "techdetect",
+            "directories": "directory",
+            "wayback": "wayback",
+            "screenshots": "screenshot",
+            "jsanalyze": "jsanalyze",
+        }
+
+        for hist_key, module_name in mappings.items():
+            hist_data = history.get(hist_key, {})
+            if hist_data:
+                output = []
+                for key, item in hist_data.items():
+                    data = item.get("data", {})
+                    if not data:
+                        continue
+                    data["first_seen"] = item.get("first_seen", "")
+                    data["last_seen"] = item.get("last_seen", "")
+                    data["is_removed"] = item.get("is_removed", False)
+                    output.append(data)
+
+                results[module_name] = {
+                    "status": "completed",
+                    "output": output,
+                    "count": len(output),
+                }
+
+        return results
 
     def _on_view_results(self):
         """Open the results viewer window."""

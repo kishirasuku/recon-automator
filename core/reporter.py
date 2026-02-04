@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from loguru import logger
 
-from core.history import HistoryManager
+from core.history import HistoryManager, ScanIndex
 
 
 class ReconReporter:
@@ -22,6 +22,7 @@ class ReconReporter:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.history_manager = HistoryManager(output_dir)
+        self.scan_index = ScanIndex(output_dir)
 
     def create_scan_directory(self, target: str) -> Path:
         """Create a directory for a scan's results.
@@ -84,6 +85,24 @@ class ReconReporter:
 
         # Export summary
         self._export_summary(results, target, profile, scan_dir)
+
+        # Register scan in global index
+        modules_run = [
+            name for name, result in results.items()
+            if not name.startswith("_") and result.get("status") == "completed"
+        ]
+        results_summary = {
+            name: result.get("count", 0)
+            for name, result in results.items()
+            if not name.startswith("_") and result.get("status") == "completed"
+        }
+        self.scan_index.register_scan(
+            domain=target,
+            profile=profile,
+            modules_run=modules_run,
+            scan_dir=str(scan_dir),
+            results_summary=results_summary,
+        )
 
         return scan_dir
 
