@@ -83,6 +83,7 @@ class ReconReporter:
         self._export_screenshots(results, scan_dir)
         self._export_jsanalyze(results, scan_dir)
         self._export_paramanalyze(results, scan_dir)
+        self._export_nucleiscan(results, scan_dir)
 
         # Export summary
         self._export_summary(results, target, profile, scan_dir)
@@ -683,6 +684,109 @@ class ReconReporter:
                 f.write("\n".join(sorted(all_urls)))
 
         logger.info(f"Exported {len(items)} vulnerable parameters: {combined_path}")
+
+    def _export_nucleiscan(self, results: dict[str, dict], scan_dir: Path):
+        """Export nuclei scan results to text files."""
+        nuclei_result = results.get("nucleiscan", {})
+        if nuclei_result.get("status") != "completed":
+            return
+
+        items = nuclei_result.get("output", [])
+        if not items:
+            return
+
+        # Severity order for sorting
+        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "unknown": 5}
+
+        # Group by severity
+        by_severity: dict[str, list[dict]] = {}
+        for item in items:
+            severity = item.get("severity", "unknown")
+            if severity not in by_severity:
+                by_severity[severity] = []
+            by_severity[severity].append(item)
+
+        # Write combined file
+        lines = [
+            "# Nuclei Vulnerability Scan Results",
+            "# Template-based vulnerability findings",
+            f"# Total findings: {len(items)}",
+            "",
+        ]
+
+        # Sort severities
+        sorted_severities = sorted(by_severity.keys(), key=lambda s: severity_order.get(s, 5))
+
+        for severity in sorted_severities:
+            sev_items = by_severity[severity]
+            if not sev_items:
+                continue
+
+            lines.append("=" * 60)
+            lines.append(f"[{severity.upper()}] ({len(sev_items)} findings)")
+            lines.append("=" * 60)
+
+            # Sort by template_id
+            sorted_items = sorted(sev_items, key=lambda x: x.get("template_id", ""))
+
+            for item in sorted_items:
+                template_id = item.get("template_id", "unknown")
+                name = item.get("name", template_id)
+                matched_at = item.get("matched_at", "")
+                description = item.get("description", "")
+                category = item.get("category", "")
+                tags = item.get("tags", [])
+                marker = "[NEW] " if item.get("is_new", False) else ""
+
+                lines.append(f"\n{marker}{name}")
+                lines.append(f"  Template: {template_id}")
+                lines.append(f"  Matched:  {matched_at}")
+                if category:
+                    lines.append(f"  Category: {category}")
+                if tags:
+                    lines.append(f"  Tags:     {', '.join(tags) if isinstance(tags, list) else tags}")
+                if description:
+                    lines.append(f"  Info:     {description[:200]}")
+
+                # Add curl command if available
+                curl_cmd = item.get("curl_command", "")
+                if curl_cmd:
+                    lines.append(f"  Curl:     {curl_cmd[:150]}...")
+
+                # Add references
+                refs = item.get("reference", [])
+                if refs:
+                    if isinstance(refs, list):
+                        for ref in refs[:3]:
+                            lines.append(f"  Ref:      {ref}")
+                    else:
+                        lines.append(f"  Ref:      {refs}")
+
+            lines.append("")
+
+        # Write main results file
+        results_path = scan_dir / "nuclei_results.txt"
+        with open(results_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines).rstrip())
+
+        # Write severity-specific files
+        for severity, sev_items in by_severity.items():
+            if sev_items:
+                sev_path = scan_dir / f"nuclei_{severity}.txt"
+                sev_lines = [f"# Nuclei {severity.upper()} findings\n"]
+                for item in sev_items:
+                    matched_at = item.get("matched_at", "")
+                    template_id = item.get("template_id", "")
+                    sev_lines.append(f"{matched_at}\t{template_id}")
+                with open(sev_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(sev_lines))
+
+        # Write JSON export for further analysis
+        json_path = scan_dir / "nuclei_findings.json"
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(items, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"Exported {len(items)} nuclei findings: {results_path}")
 
     def _export_summary(
         self,

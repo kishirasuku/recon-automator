@@ -406,6 +406,7 @@ class ResultsViewer(ctk.CTkToplevel):
         "wayback": "Wayback URLs",
         "jsanalyze": "JS Analysis",
         "paramanalyze": "Vuln Params",
+        "nucleiscan": "Nuclei Results",
         "screenshot": "Screenshots",
     }
 
@@ -794,6 +795,53 @@ class ResultsViewer(ctk.CTkToplevel):
                         lines.append(f"      {url}")
                     if len(sample_urls) > 2:
                         lines.append(f"      ... +{len(sample_urls) - 2} more")
+                lines.append("")
+
+        elif module_name == "nucleiscan":
+            # Group by severity
+            severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "unknown": 5}
+            by_severity: dict[str, list[dict]] = {}
+            for item in output:
+                severity = item.get("severity", "unknown")
+                if severity not in by_severity:
+                    by_severity[severity] = []
+                by_severity[severity].append(item)
+
+            # Sort severities
+            sorted_severities = sorted(by_severity.keys(), key=lambda s: severity_order.get(s, 5))
+
+            for severity in sorted_severities:
+                sev_items = by_severity[severity]
+                if not sev_items:
+                    continue
+
+                # Color coding hint in header
+                if severity == "critical":
+                    header = f"[!!!] CRITICAL ({len(sev_items)} findings)"
+                elif severity == "high":
+                    header = f"[!!] HIGH ({len(sev_items)} findings)"
+                elif severity == "medium":
+                    header = f"[!] MEDIUM ({len(sev_items)} findings)"
+                else:
+                    header = f"[{severity.upper()}] ({len(sev_items)} findings)"
+
+                lines.append("=" * 55)
+                lines.append(header)
+                lines.append("=" * 55)
+
+                for item in sev_items:
+                    template_id = item.get("template_id", "unknown")
+                    name = item.get("name", template_id)
+                    matched_at = item.get("matched_at", "")
+                    category = item.get("category", "")
+                    marker = "[NEW] " if item.get("is_new", False) else ""
+
+                    lines.append(f"\n  {marker}{name}")
+                    lines.append(f"    Template: {template_id}")
+                    lines.append(f"    URL:      {matched_at}")
+                    if category:
+                        lines.append(f"    Scan Cat: {category}")
+
                 lines.append("")
 
         else:

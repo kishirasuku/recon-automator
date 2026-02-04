@@ -11,6 +11,7 @@ from .asn import ASNModule
 from .screenshot import ScreenshotModule
 from .jsanalyze import JSAnalyzeModule
 from .paramanalyze import ParamAnalyzeModule
+from .nucleiscan import NucleiScanModule
 
 # Module registry - maps module names to their classes
 MODULE_REGISTRY: dict[str, type[BaseModule]] = {
@@ -24,6 +25,7 @@ MODULE_REGISTRY: dict[str, type[BaseModule]] = {
     "screenshot": ScreenshotModule,
     "jsanalyze": JSAnalyzeModule,
     "paramanalyze": ParamAnalyzeModule,
+    "nucleiscan": NucleiScanModule,
 }
 
 
@@ -104,6 +106,7 @@ __all__ = [
     "ScreenshotModule",
     "JSAnalyzeModule",
     "ParamAnalyzeModule",
+    "NucleiScanModule",
     "MODULE_REGISTRY",
     "get_all_modules",
     "get_module",

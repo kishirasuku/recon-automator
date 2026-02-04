@@ -10,6 +10,7 @@ tools:
   gowitness: /usr/bin/gowitness
   linkfinder: /usr/local/bin/linkfinder
   secretfinder: /usr/local/bin/secretfinder
+  nuclei: /usr/bin/nuclei
 
 profiles:
   quick:
@@ -44,6 +45,13 @@ profiles:
       paramanalyze:
         enabled: true
         timeout: 60
+      nucleiscan:
+        enabled: false  # Disabled in quick for speed
+        timeout: 300
+        severity:
+          - critical
+          - high
+        rate_limit: 50
       screenshot:
         enabled: false  # Controlled by checkbox in GUI
         timeout: 300
@@ -84,6 +92,14 @@ profiles:
       paramanalyze:
         enabled: true
         timeout: 120
+      nucleiscan:
+        enabled: true
+        timeout: 600
+        severity:
+          - critical
+          - high
+          - medium
+        rate_limit: 100
       screenshot:
         enabled: false  # Controlled by checkbox in GUI
         timeout: 600
@@ -124,6 +140,15 @@ profiles:
       paramanalyze:
         enabled: true
         timeout: 180
+      nucleiscan:
+        enabled: true
+        timeout: 900
+        severity:
+          - critical
+          - high
+          - medium
+          - low
+        rate_limit: 150
       screenshot:
         enabled: false  # Controlled by checkbox in GUI
         timeout: 900

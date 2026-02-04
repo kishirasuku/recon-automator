@@ -310,6 +310,7 @@ class HistoryManager:
             "screenshot": self._merge_screenshots,
             "jsanalyze": self._merge_jsanalyze,
             "paramanalyze": self._merge_paramanalyze,
+            "nucleiscan": self._merge_nucleiscan,
         }
 
         for module_name, handler in module_handlers.items():
@@ -769,6 +770,50 @@ class HistoryManager:
 
         return result
 
+    def _merge_nucleiscan(self, history: dict, result: dict, timestamp: str) -> dict:
+        """Merge nuclei scan results with history."""
+        history_data = history.setdefault("nucleiscan", {})
+        current_items = set()
+
+        for item in result.get("output", []):
+            template_id = item.get("template_id", "")
+            matched_at = item.get("matched_at", "")
+            if not template_id or not matched_at:
+                continue
+
+            key = f"{template_id}_{matched_at}"
+            current_items.add(key)
+
+            if key in history_data:
+                item["is_new"] = False
+                item["first_seen"] = history_data[key].get("first_seen", timestamp)
+                item["last_seen"] = timestamp
+                history_data[key]["last_seen"] = timestamp
+                history_data[key]["is_removed"] = False
+            else:
+                item["is_new"] = True
+                item["first_seen"] = timestamp
+                item["last_seen"] = timestamp
+                history_data[key] = {
+                    "first_seen": timestamp,
+                    "last_seen": timestamp,
+                    "is_removed": False,
+                    "data": item,
+                }
+
+        for key, hist_item in history_data.items():
+            if key not in current_items and not hist_item.get("is_removed", False):
+                hist_item["is_removed"] = True
+                hist_item["removed_at"] = timestamp
+                removed_item = hist_item.get("data", {}).copy()
+                removed_item["is_new"] = False
+                removed_item["is_removed"] = True
+                removed_item["first_seen"] = hist_item.get("first_seen", "")
+                removed_item["last_seen"] = hist_item.get("last_seen", "")
+                result["output"].append(removed_item)
+
+        return result
+
     def get_statistics(self, domain: str) -> dict:
         """Get statistics for a domain's scan history.
 
@@ -788,7 +833,7 @@ class HistoryManager:
             "totals": {},
         }
 
-        for module in ["subdomains", "probe", "asn", "ports", "technologies", "directories", "wayback", "screenshots", "jsanalyze", "paramanalyze"]:
+        for module in ["subdomains", "probe", "asn", "ports", "technologies", "directories", "wayback", "screenshots", "jsanalyze", "paramanalyze", "nucleiscan"]:
             module_data = history.get(module, {})
             total = len(module_data)
             active = sum(1 for v in module_data.values() if not v.get("is_removed", False))

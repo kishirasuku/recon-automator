@@ -157,6 +157,7 @@ class ReconRunner:
         phase4_modules = []  # portscan, techdetect, directory, wayback, jsanalyze
         phase5_modules = []  # screenshot
         phase6_modules = []  # paramanalyze (needs results from phase 4)
+        phase7_modules = []  # nucleiscan (needs results from phase 6)
 
         for module in modules:
             mod_config = module_configs.get(module.name, {})
@@ -180,6 +181,8 @@ class ReconRunner:
                 phase5_modules.append((module, mod_config))
             elif module.name == "paramanalyze":
                 phase6_modules.append((module, mod_config))
+            elif module.name == "nucleiscan":
+                phase7_modules.append((module, mod_config))
             else:
                 phase4_modules.append((module, mod_config))
 
@@ -359,6 +362,47 @@ class ReconRunner:
             else:
                 self.log("No URLs with parameters found for analysis")
                 for module, mod_config in phase6_modules:
+                    self.update_progress(module.name, "skipped")
+
+        # Phase 7: Nuclei scanning (needs results from paramanalyze)
+        if phase7_modules and not self.cancelled:
+            paramanalyze_result = self.results.get("paramanalyze", {})
+
+            if paramanalyze_result.get("status") == "completed":
+                param_results = paramanalyze_result.get("output", [])
+
+                if param_results:
+                    self.log("Phase 7: Running nuclei vulnerability scans")
+
+                    # Group URLs by category for nuclei
+                    urls_by_category: dict[str, list[str]] = {}
+                    for item in param_results:
+                        category = item.get("category", "unknown")
+                        sample_urls = item.get("sample_urls", [])
+                        if category not in urls_by_category:
+                            urls_by_category[category] = []
+                        urls_by_category[category].extend(sample_urls)
+
+                    # Deduplicate
+                    urls_by_category = {k: list(set(v)) for k, v in urls_by_category.items()}
+
+                    for module, mod_config in phase7_modules:
+                        if self.cancelled:
+                            break
+                        mod_config = dict(mod_config)
+                        mod_config["param_results"] = param_results
+                        mod_config["urls_by_category"] = urls_by_category
+                        if scan_dir:
+                            mod_config["scan_dir"] = str(scan_dir)
+                        result = await self.run_module(module, target, mod_config)
+                        self.results[module.name] = result
+                else:
+                    self.log("No paramanalyze results for nuclei scanning")
+                    for module, mod_config in phase7_modules:
+                        self.update_progress(module.name, "skipped")
+            else:
+                self.log("Skipping nuclei scan: paramanalyze not completed")
+                for module, mod_config in phase7_modules:
                     self.update_progress(module.name, "skipped")
 
         self.running_tasks.clear()
