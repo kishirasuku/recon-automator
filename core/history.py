@@ -99,22 +99,72 @@ class ScanIndex:
     def get_all_domains(self) -> list[dict]:
         """Get list of all scanned domains with summary info.
 
+        Also scans for existing history.json files that aren't in the index.
+
         Returns:
             List of domain info dictionaries, sorted by last scan date.
         """
         index = self.load_index()
-        domains = []
+        domains_dict = {}
 
+        # Get domains from index
         for domain, info in index.get("domains", {}).items():
-            domains.append({
+            domains_dict[domain] = {
                 "domain": domain,
                 "first_scan": info.get("first_scan", ""),
                 "last_scan": info.get("last_scan", ""),
                 "scan_count": info.get("scan_count", 0),
                 "last_profile": info["scans"][0]["profile"] if info.get("scans") else "",
-            })
+            }
 
-        # Sort by last scan date (most recent first)
+        # Also scan for existing history.json files in output directory
+        if self.output_dir.exists():
+            for item in self.output_dir.iterdir():
+                if item.is_dir() and not item.name.startswith("."):
+                    history_file = item / "history.json"
+                    if history_file.exists():
+                        try:
+                            with open(history_file, "r", encoding="utf-8") as f:
+                                history = json.load(f)
+                            domain = history.get("domain", item.name)
+                            if domain not in domains_dict:
+                                domains_dict[domain] = {
+                                    "domain": domain,
+                                    "first_scan": history.get("first_seen", ""),
+                                    "last_scan": history.get("last_updated", ""),
+                                    "scan_count": history.get("scan_count", 1),
+                                    "last_profile": "",
+                                }
+                        except (json.JSONDecodeError, IOError):
+                            pass
+
+            # Also check for scan directories (target_timestamp format)
+            for item in self.output_dir.iterdir():
+                if item.is_dir() and not item.name.startswith("."):
+                    # Check if it's a timestamp-based directory
+                    results_file = item / "results.json"
+                    if results_file.exists():
+                        try:
+                            with open(results_file, "r", encoding="utf-8") as f:
+                                results = json.load(f)
+                            domain = results.get("target", "")
+                            timestamp = results.get("timestamp", "")
+                            if domain and domain not in domains_dict:
+                                domains_dict[domain] = {
+                                    "domain": domain,
+                                    "first_scan": timestamp,
+                                    "last_scan": timestamp,
+                                    "scan_count": 1,
+                                    "last_profile": results.get("profile", ""),
+                                }
+                            elif domain and timestamp > domains_dict[domain].get("last_scan", ""):
+                                domains_dict[domain]["last_scan"] = timestamp
+                                domains_dict[domain]["scan_count"] += 1
+                        except (json.JSONDecodeError, IOError):
+                            pass
+
+        # Convert to list and sort by last scan date (most recent first)
+        domains = list(domains_dict.values())
         domains.sort(key=lambda x: x.get("last_scan", ""), reverse=True)
         return domains
 

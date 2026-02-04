@@ -677,6 +677,82 @@ class ResultsViewer(ctk.CTkToplevel):
                         lines.append(f"     File: {path}")
                     lines.append("")
 
+        elif module_name == "jsanalyze":
+            # Separate endpoints and secrets
+            endpoints = []
+            secrets = []
+            for item in output:
+                item_type = item.get("type", "")
+                if item_type == "js_endpoint":
+                    endpoints.append(item)
+                elif item_type == "js_secret":
+                    secrets.append(item)
+
+            # Show secrets first (critical)
+            if secrets:
+                lines.append("=" * 50)
+                lines.append(f"POTENTIAL SECRETS ({len(secrets)} found)")
+                lines.append("=" * 50)
+                for item in secrets:
+                    finding = item.get("finding", "")
+                    secret_type = item.get("secret_type", "unknown")
+                    source = item.get("source", "")
+                    marker = "[NEW] " if item.get("is_new", False) else ""
+                    lines.append(f"{marker}[{secret_type.upper()}]")
+                    lines.append(f"  {finding}")
+                    if source:
+                        lines.append(f"  Source: {source}")
+                    lines.append("")
+
+            # Show endpoints grouped by category
+            if endpoints:
+                # Group by category
+                by_category: dict[str, list[dict]] = {}
+                for ep in endpoints:
+                    category = ep.get("category", "endpoint")
+                    if category not in by_category:
+                        by_category[category] = []
+                    by_category[category].append(ep)
+
+                # Sort categories by importance
+                category_order = ["api_endpoint", "auth", "admin", "config", "upload", "endpoint", "javascript", "data"]
+                sorted_categories = sorted(by_category.keys(), key=lambda c: (
+                    category_order.index(c) if c in category_order else len(category_order),
+                    c
+                ))
+
+                lines.append("=" * 50)
+                lines.append(f"ENDPOINTS ({len(endpoints)} found)")
+                lines.append("=" * 50)
+
+                for category in sorted_categories:
+                    cat_items = by_category[category]
+                    lines.append(f"\n[{category.upper()}] ({len(cat_items)} items)")
+                    lines.append("-" * 40)
+
+                    # Sort by sensitivity
+                    sorted_items = sorted(cat_items, key=lambda x: (
+                        {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(x.get("sensitivity", "low"), 4),
+                        x.get("finding", "")
+                    ))
+
+                    for item in sorted_items:
+                        finding = item.get("finding", "")
+                        sensitivity = item.get("sensitivity", "low")
+                        marker = ""
+                        if item.get("is_new", False):
+                            marker = "[NEW] "
+                        if sensitivity == "high":
+                            marker += "[!] "
+                        elif sensitivity == "medium":
+                            marker += "[*] "
+                        lines.append(f"  {marker}{finding}")
+
+        else:
+            # Fallback for unknown modules
+            for item in output:
+                lines.append(str(item))
+
         return "\n".join(lines)
 
     def _populate_summary(self, tab: ctk.CTkFrame):
