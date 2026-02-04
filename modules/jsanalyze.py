@@ -58,8 +58,23 @@ class JSAnalyzeModule(BaseModule):
                 target = f"https://{target}"
             js_urls = [target]
 
+        # Filter and validate URLs
+        valid_js_urls = []
+        for url in js_urls:
+            # Skip obviously invalid URLs
+            if not url or len(url) < 10:
+                continue
+            # Ensure URL has proper scheme
+            if not url.startswith(("http://", "https://")):
+                continue
+            # Skip URLs with obviously invalid domains
+            parsed = urlparse(url)
+            if not parsed.netloc or "." not in parsed.netloc:
+                continue
+            valid_js_urls.append(url)
+
         # Limit the number of files to analyze
-        js_urls = js_urls[:max_files]
+        js_urls = valid_js_urls[:max_files]
 
         if log_callback:
             log_callback(f"[jsanalyze] Analyzing {len(js_urls)} targets")
@@ -110,9 +125,23 @@ class JSAnalyzeModule(BaseModule):
         if log_callback:
             log_callback(f"[jsanalyze] Running linkfinder: {' '.join(cmd)}")
 
-        async for line in run_command(cmd, timeout=timeout, log_callback=log_callback):
-            if line.strip():
-                yield line.strip()
+        try:
+            async for line in run_command(cmd, timeout=timeout, log_callback=log_callback):
+                line = line.strip()
+                if not line:
+                    continue
+                # Skip error messages from linkfinder
+                if any(err in line.lower() for err in [
+                    "error:", "usage:", "invalid input", "ssl error",
+                    "urlopen error", "connection refused", "timed out"
+                ]):
+                    if log_callback:
+                        log_callback(f"[jsanalyze] Skipping error: {line[:80]}")
+                    continue
+                yield line
+        except Exception as e:
+            if log_callback:
+                log_callback(f"[jsanalyze] Error running linkfinder on {target}: {e}")
 
     async def _run_secretfinder(
         self, target: str, timeout: int, log_callback: callable
