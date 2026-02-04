@@ -9,12 +9,13 @@ A Python GUI application for Kali Linux that automates web reconnaissance with a
 ## Features
 
 - **Single-click reconnaissance** - Enter a target domain and start scanning
-- **5 Recon Modules**:
+- **6 Recon Modules**:
   - Subdomain enumeration (subfinder)
   - Port scanning (nmap)
   - Technology detection (whatweb/httpx)
   - Directory enumeration (gobuster)
   - Wayback URL discovery (waybackurls/gau)
+  - JavaScript analysis (linkfinder/secretfinder)
 - **3 Scan Profiles**: Quick, Standard, Deep
 - **Real-time log output** with timestamps
 - **Results export** to JSON and TXT files
@@ -56,6 +57,12 @@ Install these tools on Kali Linux:
 sudo apt update
 sudo apt install subfinder nmap whatweb gobuster
 go install github.com/tomnomnom/waybackurls@latest
+
+# For JavaScript analysis (optional)
+git clone https://github.com/GerbenJavado/LinkFinder.git
+cd LinkFinder && pip install -r requirements.txt && cd ..
+git clone https://github.com/m4ll0k/SecretFinder.git
+cd SecretFinder && pip install -r requirements.txt && cd ..
 ```
 
 ### Python Dependencies
@@ -105,6 +112,8 @@ output/{target}_{timestamp}/
 ├── technologies.txt  # Detected technologies
 ├── directories.txt   # Found directories/files
 ├── wayback.txt       # Historical URLs
+├── js_endpoints.txt  # Endpoints found in JavaScript
+├── js_secrets.txt    # Potential secrets found in JavaScript
 └── summary.txt       # Human-readable summary
 ```
 
@@ -133,7 +142,8 @@ recon-automator/
 │   ├── portscan.py         # Nmap wrapper
 │   ├── techdetect.py       # WhatWeb/httpx wrapper
 │   ├── directory.py        # Gobuster wrapper
-│   └── wayback.py          # Waybackurls wrapper
+│   ├── wayback.py          # Waybackurls wrapper
+│   └── jsanalyze.py        # LinkFinder/SecretFinder wrapper
 ├── gui/
 │   ├── app.py              # Main window
 │   └── widgets.py          # Custom widgets

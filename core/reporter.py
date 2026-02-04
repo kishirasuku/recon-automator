@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 from loguru import logger
 
+from core.history import HistoryManager
+
 
 class ReconReporter:
     """Handles result aggregation and export to various formats."""
@@ -19,6 +21,7 @@ class ReconReporter:
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.history_manager = HistoryManager(output_dir)
 
     def create_scan_directory(self, target: str) -> Path:
         """Create a directory for a scan's results.
@@ -59,6 +62,12 @@ class ReconReporter:
 
         logger.info(f"Exporting results to {scan_dir}")
 
+        # Load history and merge results
+        scan_timestamp = datetime.now().isoformat()
+        history = self.history_manager.load_history(target)
+        results = self.history_manager.merge_results(history, results, scan_timestamp)
+        self.history_manager.save_history(target, history)
+
         # Export combined JSON
         self._export_json(results, target, profile, scan_dir)
 
@@ -71,6 +80,7 @@ class ReconReporter:
         self._export_directories(results, scan_dir)
         self._export_wayback(results, scan_dir)
         self._export_screenshots(results, scan_dir)
+        self._export_jsanalyze(results, scan_dir)
 
         # Export summary
         self._export_summary(results, target, profile, scan_dir)
@@ -106,22 +116,46 @@ class ReconReporter:
         logger.info(f"Exported JSON: {json_path}")
 
     def _export_subdomains(self, results: dict[str, dict], scan_dir: Path):
-        """Export subdomains to text file."""
+        """Export subdomains to text file with new/removed markers."""
         subdomain_result = results.get("subdomain", {})
         if subdomain_result.get("status") != "completed":
             return
 
-        subdomains = [
-            item["subdomain"]
-            for item in subdomain_result.get("output", [])
-            if "subdomain" in item
-        ]
+        items = subdomain_result.get("output", [])
+        if not items:
+            return
 
-        if subdomains:
+        lines = []
+        new_count = 0
+        removed_count = 0
+
+        # Sort: new first, then existing, then removed
+        sorted_items = sorted(items, key=lambda x: (
+            x.get("is_removed", False),
+            not x.get("is_new", False),
+            x.get("subdomain", "")
+        ))
+
+        for item in sorted_items:
+            subdomain = item.get("subdomain", "")
+            if not subdomain:
+                continue
+
+            if item.get("is_new", False):
+                lines.append(f"[NEW] {subdomain}")
+                new_count += 1
+            elif item.get("is_removed", False):
+                lines.append(f"[REMOVED] {subdomain}")
+                removed_count += 1
+            else:
+                lines.append(f"       {subdomain}")
+
+        if lines:
             path = scan_dir / "subdomains.txt"
             with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(sorted(set(subdomains))))
-            logger.info(f"Exported {len(subdomains)} subdomains: {path}")
+                f.write(f"# Subdomains (New: {new_count}, Removed: {removed_count})\n\n")
+                f.write("\n".join(lines))
+            logger.info(f"Exported {len(lines)} subdomains ({new_count} new, {removed_count} removed): {path}")
 
     def _export_inactive_subdomains(self, results: dict[str, dict], scan_dir: Path):
         """Export inactive/unused subdomains to a separate file."""
@@ -286,23 +320,45 @@ class ReconReporter:
 
         lines = []
         total_count = 0
+        total_new = 0
+        total_removed = 0
 
         for subdomain in sorted(by_subdomain.keys()):
             items = by_subdomain[subdomain]
             total_count += len(items)
 
+            # Sort: new first, then existing, then removed
+            sorted_items = sorted(items, key=lambda x: (
+                x.get("is_removed", False),
+                not x.get("is_new", False),
+                x.get("url", "")
+            ))
+
+            new_count = sum(1 for i in items if i.get("is_new", False))
+            removed_count = sum(1 for i in items if i.get("is_removed", False))
+            total_new += new_count
+            total_removed += removed_count
+
             lines.append("=" * 60)
             lines.append(f"[{subdomain}]")
-            lines.append(f"Found: {len(items)} directories/files")
+            lines.append(f"Found: {len(items)} (New: {new_count}, Removed: {removed_count})")
             lines.append("=" * 60)
 
-            for item in items:
+            for item in sorted_items:
                 url = item["url"]
                 status = item.get("status_code", "")
                 size = item.get("size", "")
                 path = item.get("path", "")
 
-                line = f"  {path or url}"
+                # Add status marker
+                if item.get("is_new", False):
+                    marker = "[NEW]    "
+                elif item.get("is_removed", False):
+                    marker = "[REMOVED]"
+                else:
+                    marker = "         "
+
+                line = f"  {marker} {path or url}"
                 if status:
                     line += f" [{status}]"
                 if size:
@@ -314,8 +370,9 @@ class ReconReporter:
         if lines:
             path = scan_dir / "directories.txt"
             with open(path, "w", encoding="utf-8") as f:
+                f.write(f"# Directories (Total New: {total_new}, Total Removed: {total_removed})\n\n")
                 f.write("\n".join(lines).rstrip())
-            logger.info(f"Exported {total_count} directories from {len(by_subdomain)} subdomains: {path}")
+            logger.info(f"Exported {total_count} directories ({total_new} new, {total_removed} removed): {path}")
 
     def _export_wayback(self, results: dict[str, dict], scan_dir: Path):
         """Export wayback URLs to text file, grouped by domain."""
@@ -393,6 +450,114 @@ class ReconReporter:
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines).rstrip())
             logger.info(f"Exported {len(items)} screenshot records: {path}")
+
+    def _export_jsanalyze(self, results: dict[str, dict], scan_dir: Path):
+        """Export JavaScript analysis results to text files."""
+        jsanalyze_result = results.get("jsanalyze", {})
+        if jsanalyze_result.get("status") != "completed":
+            return
+
+        items = jsanalyze_result.get("output", [])
+        if not items:
+            return
+
+        # Separate endpoints and secrets
+        endpoints = []
+        secrets = []
+
+        for item in items:
+            item_type = item.get("type", "")
+            if item_type == "js_endpoint":
+                endpoints.append(item)
+            elif item_type == "js_secret":
+                secrets.append(item)
+
+        # Export endpoints
+        if endpoints:
+            lines = [
+                "# JavaScript Endpoints",
+                "# Extracted from JavaScript files using LinkFinder",
+                "",
+            ]
+
+            # Group by category
+            by_category: dict[str, list[dict]] = {}
+            for ep in endpoints:
+                category = ep.get("category", "endpoint")
+                if category not in by_category:
+                    by_category[category] = []
+                by_category[category].append(ep)
+
+            # Sort categories by sensitivity
+            category_order = ["api_endpoint", "auth", "admin", "config", "upload", "endpoint", "javascript", "data"]
+            sorted_categories = sorted(by_category.keys(), key=lambda c: (
+                category_order.index(c) if c in category_order else len(category_order),
+                c
+            ))
+
+            for category in sorted_categories:
+                cat_items = by_category[category]
+                lines.append("=" * 50)
+                lines.append(f"[{category.upper()}] ({len(cat_items)} items)")
+                lines.append("=" * 50)
+
+                # Sort by sensitivity (high first)
+                sorted_items = sorted(cat_items, key=lambda x: (
+                    {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(x.get("sensitivity", "low"), 4),
+                    x.get("finding", "")
+                ))
+
+                for item in sorted_items:
+                    finding = item.get("finding", "")
+                    sensitivity = item.get("sensitivity", "low")
+                    marker = ""
+                    if sensitivity == "high":
+                        marker = "[!] "
+                    elif sensitivity == "medium":
+                        marker = "[*] "
+                    lines.append(f"  {marker}{finding}")
+
+                lines.append("")
+
+            path = scan_dir / "js_endpoints.txt"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines).rstrip())
+            logger.info(f"Exported {len(endpoints)} JS endpoints: {path}")
+
+        # Export secrets
+        if secrets:
+            lines = [
+                "# JavaScript Secrets",
+                "# Potential secrets and API keys found in JavaScript files",
+                "# WARNING: Verify these findings manually - false positives are common",
+                "",
+            ]
+
+            # Group by secret type
+            by_type: dict[str, list[dict]] = {}
+            for secret in secrets:
+                secret_type = secret.get("secret_type", "unknown")
+                if secret_type not in by_type:
+                    by_type[secret_type] = []
+                by_type[secret_type].append(secret)
+
+            for secret_type in sorted(by_type.keys()):
+                type_items = by_type[secret_type]
+                lines.append("=" * 50)
+                lines.append(f"[{secret_type.upper()}] ({len(type_items)} items)")
+                lines.append("=" * 50)
+
+                for item in type_items:
+                    finding = item.get("finding", "")
+                    source = item.get("source", "unknown")
+                    lines.append(f"  {finding}")
+                    lines.append(f"    Source: {source}")
+                    lines.append("")
+
+            path = scan_dir / "js_secrets.txt"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines).rstrip())
+            logger.info(f"Exported {len(secrets)} potential JS secrets: {path}")
 
     def _export_summary(
         self,

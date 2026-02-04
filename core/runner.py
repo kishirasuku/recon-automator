@@ -252,12 +252,25 @@ class ReconRunner:
             self.log("Phase 4: Running remaining modules")
             tasks = []
 
+            # Collect JS URLs from wayback results for jsanalyze
+            js_urls_from_wayback = []
+            wayback_result = self.results.get("wayback", {})
+            if wayback_result.get("status") == "completed":
+                for item in wayback_result.get("output", []):
+                    if item.get("category") == "javascript" or item.get("extension") in ["js", "jsx"]:
+                        js_urls_from_wayback.append(item.get("url", ""))
+
             for module, mod_config in phase4_modules:
                 mod_config = dict(mod_config)
 
                 # Pass alive subdomains to directory module
                 if module.name == "directory" and alive_subdomains:
                     mod_config["targets"] = alive_subdomains
+
+                # Pass JS URLs from wayback to jsanalyze module
+                if module.name == "jsanalyze" and js_urls_from_wayback:
+                    mod_config["js_urls"] = js_urls_from_wayback
+                    self.log(f"Passing {len(js_urls_from_wayback)} JS URLs to jsanalyze")
 
                 task = asyncio.create_task(
                     self.run_module(module, target, mod_config),

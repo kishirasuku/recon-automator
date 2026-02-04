@@ -9,6 +9,7 @@ from .wayback import WaybackModule
 from .probe import ProbeModule
 from .asn import ASNModule
 from .screenshot import ScreenshotModule
+from .jsanalyze import JSAnalyzeModule
 
 # Module registry - maps module names to their classes
 MODULE_REGISTRY: dict[str, type[BaseModule]] = {
@@ -20,6 +21,7 @@ MODULE_REGISTRY: dict[str, type[BaseModule]] = {
     "directory": DirectoryModule,
     "wayback": WaybackModule,
     "screenshot": ScreenshotModule,
+    "jsanalyze": JSAnalyzeModule,
 }
 
 
@@ -98,6 +100,7 @@ __all__ = [
     "DirectoryModule",
     "WaybackModule",
     "ScreenshotModule",
+    "JSAnalyzeModule",
     "MODULE_REGISTRY",
     "get_all_modules",
     "get_module",
