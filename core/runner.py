@@ -367,11 +367,19 @@ class ReconRunner:
         # Phase 7: Nuclei scanning (needs results from paramanalyze)
         if phase7_modules and not self.cancelled:
             paramanalyze_result = self.results.get("paramanalyze", {})
+            param_results = []
 
+            # Try to get paramanalyze results from current scan
             if paramanalyze_result.get("status") == "completed":
                 param_results = paramanalyze_result.get("output", [])
-
+                self.log(f"Using paramanalyze results from current scan ({len(param_results)} params)")
+            else:
+                # Try to load from history
+                param_results = self._load_paramanalyze_from_history(target)
                 if param_results:
+                    self.log(f"Loaded paramanalyze results from history ({len(param_results)} params)")
+
+            if param_results:
                     self.log("Phase 7: Running nuclei vulnerability scans")
 
                     # Group URLs by category for nuclei
@@ -396,12 +404,8 @@ class ReconRunner:
                             mod_config["scan_dir"] = str(scan_dir)
                         result = await self.run_module(module, target, mod_config)
                         self.results[module.name] = result
-                else:
-                    self.log("No paramanalyze results for nuclei scanning")
-                    for module, mod_config in phase7_modules:
-                        self.update_progress(module.name, "skipped")
             else:
-                self.log("Skipping nuclei scan: paramanalyze not completed")
+                self.log("No paramanalyze results available (current scan or history)")
                 for module, mod_config in phase7_modules:
                     self.update_progress(module.name, "skipped")
 
@@ -460,6 +464,45 @@ class ReconRunner:
             logger.warning(f"Failed to load URLs from history: {e}")
 
         return urls
+
+    def _load_paramanalyze_from_history(self, target: str) -> list[dict]:
+        """Load paramanalyze results from historical scan data.
+
+        Args:
+            target: Target domain.
+
+        Returns:
+            List of paramanalyze result dictionaries.
+        """
+        from core.history import HistoryManager
+
+        results = []
+        history_manager = HistoryManager()
+
+        try:
+            history = history_manager.load_history(target)
+            paramanalyze_history = history.get("paramanalyze", {})
+
+            for key, item in paramanalyze_history.items():
+                if item.get("is_removed", False):
+                    continue
+
+                data = item.get("data", {})
+                if data:
+                    # Reconstruct param result
+                    results.append({
+                        "param": data.get("param", ""),
+                        "category": data.get("category", "unknown"),
+                        "severity": data.get("severity", "medium"),
+                        "description": data.get("description", ""),
+                        "count": data.get("count", 0),
+                        "sample_urls": data.get("sample_urls", []),
+                    })
+
+        except Exception as e:
+            logger.warning(f"Failed to load paramanalyze from history: {e}")
+
+        return results
 
     async def cancel_scan(self):
         """Cancel all running modules."""
