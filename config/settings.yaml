@@ -8,6 +8,8 @@ tools:
   httpx: /usr/bin/httpx-toolkit  # Also checks for 'httpx' automatically
   asnmap: /usr/bin/asnmap
   gowitness: /usr/bin/gowitness
+  linkfinder: /usr/local/bin/linkfinder
+  secretfinder: /usr/local/bin/secretfinder
 
 profiles:
   quick:
@@ -32,6 +34,11 @@ profiles:
       wayback:
         enabled: true
         limit: 100
+      jsanalyze:
+        enabled: false  # Disabled in quick for speed
+        timeout: 120
+        max_files: 20
+        scan_secrets: true
       screenshot:
         enabled: false  # Controlled by checkbox in GUI
         timeout: 300
@@ -59,6 +66,11 @@ profiles:
       wayback:
         enabled: true
         limit: 500
+      jsanalyze:
+        enabled: true
+        timeout: 300
+        max_files: 50
+        scan_secrets: true
       screenshot:
         enabled: false  # Controlled by checkbox in GUI
         timeout: 600
@@ -86,6 +98,11 @@ profiles:
       wayback:
         enabled: true
         limit: 0
+      jsanalyze:
+        enabled: true
+        timeout: 600
+        max_files: 100
+        scan_secrets: true
       screenshot:
         enabled: false  # Controlled by checkbox in GUI
         timeout: 900
