@@ -32,6 +32,13 @@ class DirectoryModule(BaseModule):
         if not targets:
             targets = [target]
 
+        # Limit number of targets to scan
+        max_targets = module_config.get("max_targets", 10)
+        if len(targets) > max_targets:
+            if log_callback:
+                log_callback(f"[directory] Limiting targets from {len(targets)} to {max_targets}")
+            targets = targets[:max_targets]
+
         tool_path = self.get_tool_path("feroxbuster")
         timeout_per_target = module_config.get("timeout", 300)
         threads = module_config.get("threads", 50)
@@ -64,6 +71,8 @@ class DirectoryModule(BaseModule):
             yield f"__TARGET__:{current_target}"
 
             # Build feroxbuster command
+            # Use shorter time limit for feroxbuster itself (80% of timeout)
+            ferox_time_limit = max(60, int(timeout_per_target * 0.8))
             if log_callback:
                 log_callback(f"[directory] Timeout: {timeout_per_target}s, Threads: {threads}, Depth: {depth}")
             cmd = [
@@ -78,6 +87,7 @@ class DirectoryModule(BaseModule):
                 "-k",                  # Allow insecure TLS
                 "--auto-tune",         # Automatically tune request rate
                 "-n",                  # No recursion (use -d for depth control)
+                "--time-limit", f"{ferox_time_limit}s",  # Enforce time limit
             ]
 
             # Add status code filter if specified

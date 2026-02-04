@@ -63,6 +63,9 @@ profiles:
         enabled: true
         wordlist: common
         threads: 30
+        timeout: 180
+        depth: 1
+        max_targets: 5
       wayback:
         enabled: true
         limit: 500
@@ -93,8 +96,11 @@ profiles:
         enabled: true
       directory:
         enabled: true
-        wordlist: medium
+        wordlist: common
         threads: 50
+        timeout: 300
+        depth: 2
+        max_targets: 10
       wayback:
         enabled: true
         limit: 0
